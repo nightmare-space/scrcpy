@@ -11,6 +11,7 @@
 
 set -e
 
+LOCAL_DIR=$(cd `dirname $0`; pwd)
 SCRCPY_DEBUG=false
 SCRCPY_VERSION_NAME=2.7
 
@@ -18,7 +19,7 @@ PLATFORM=${ANDROID_PLATFORM:-35}
 BUILD_TOOLS=${ANDROID_BUILD_TOOLS:-35.0.0}
 BUILD_TOOLS_DIR="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
 
-BUILD_DIR="$(realpath ${BUILD_DIR:-build_manual})"
+BUILD_DIR="$LOCAL_DIR/${BUILD_DIR:-build}"
 CLASSES_DIR="$BUILD_DIR/classes"
 GEN_DIR="$BUILD_DIR/gen"
 SERVER_DIR=$(dirname "$0")
@@ -104,3 +105,5 @@ fi
 rm -rf "$GEN_DIR" "$CLASSES_DIR"
 
 echo "Server generated in $BUILD_DIR/$SERVER_BINARY"
+
+cp $BUILD_DIR/$SERVER_BINARY /Users/nightmare/Desktop/nightmare-core/uncon/assets/scrcpy-server-v2.7

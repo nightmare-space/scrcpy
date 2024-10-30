@@ -2,6 +2,7 @@ package com.genymobile.scrcpy.device;
 
 import com.genymobile.scrcpy.control.ControlChannel;
 import com.genymobile.scrcpy.util.IO;
+import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.util.StringUtils;
 
 import android.net.LocalServerSocket;
@@ -64,7 +65,9 @@ public final class DesktopConnection implements Closeable {
             if (tunnelForward) {
                 try (LocalServerSocket localServerSocket = new LocalServerSocket(socketName)) {
                     if (video) {
+                        Ln.i("Waiting for video connection on " + socketName);
                         videoSocket = localServerSocket.accept();
+                        Ln.i("Video connection from " + videoSocket.getPeerCredentials());
                         if (sendDummyByte) {
                             // send one byte so the client may read() to detect a connection error
                             videoSocket.getOutputStream().write(0);
@@ -72,7 +75,9 @@ public final class DesktopConnection implements Closeable {
                         }
                     }
                     if (audio) {
+                        Ln.i("Waiting for audio connection on " + socketName);
                         audioSocket = localServerSocket.accept();
+                        Ln.i("Audio connection from " + audioSocket.getPeerCredentials());
                         if (sendDummyByte) {
                             // send one byte so the client may read() to detect a connection error
                             audioSocket.getOutputStream().write(0);
@@ -80,7 +85,9 @@ public final class DesktopConnection implements Closeable {
                         }
                     }
                     if (control) {
+                        Ln.i("Waiting for control connection on " + socketName);
                         controlSocket = localServerSocket.accept();
+                        Ln.i("Control connection from " + controlSocket.getPeerCredentials());
                         if (sendDummyByte) {
                             // send one byte so the client may read() to detect a connection error
                             controlSocket.getOutputStream().write(0);
