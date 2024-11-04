@@ -45,15 +45,17 @@ public class ScreenCapture extends SurfaceCapture {
 
     @Override
     public void init() {
-        if (displayId == 0) {
+//        if (displayId == 0) {
             rotationWatcher = new IRotationWatcher.Stub() {
                 @Override
                 public void onRotationChanged(int rotation) {
+                    Ln.i("Display rotated, request reset");
                     requestReset();
                 }
             };
+            Ln.i("registerRotationWatcher display " + displayId);
             ServiceManager.getWindowManager().registerRotationWatcher(rotationWatcher, displayId);
-        }
+//        }
 
         if (Build.VERSION.SDK_INT >= AndroidVersions.API_29_ANDROID_10) {
             displayFoldListener = new IDisplayFoldListener.Stub() {

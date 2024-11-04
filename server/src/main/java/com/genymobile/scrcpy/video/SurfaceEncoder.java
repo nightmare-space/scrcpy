@@ -176,6 +176,7 @@ public class SurfaceEncoder implements AsyncProcessor {
             try {
                 if (capture.consumeReset()) {
                     // must restart encoding with new size
+                    Ln.i("Encoding must be restarted");
                     break;
                 }
 
