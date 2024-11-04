@@ -9,6 +9,7 @@ import com.genymobile.scrcpy.device.Point;
 import com.genymobile.scrcpy.device.Position;
 import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.util.LogUtils;
+import com.genymobile.scrcpy.video.SurfaceCapture;
 import com.genymobile.scrcpy.video.VirtualDisplayListener;
 import com.genymobile.scrcpy.wrappers.ClipboardManager;
 import com.genymobile.scrcpy.wrappers.InputManager;
@@ -91,7 +92,10 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     private final MotionEvent.PointerProperties[] pointerProperties = new MotionEvent.PointerProperties[PointersState.MAX_POINTERS];
     private final MotionEvent.PointerCoords[] pointerCoords = new MotionEvent.PointerCoords[PointersState.MAX_POINTERS];
 
-    private boolean keepPowerModeOff;
+    private boolean keepDisplayPowerOff;
+
+    // Used for resetting video encoding on RESET_VIDEO message
+    private SurfaceCapture surfaceCapture;
 
     public Controller(int displayId, ControlChannel controlChannel, CleanUp cleanUp, boolean clipboardAutosync, boolean powerOn) {
         this.displayId = displayId;
@@ -143,6 +147,10 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
         }
     }
 
+    public void setSurfaceCapture(SurfaceCapture surfaceCapture) {
+        this.surfaceCapture = surfaceCapture;
+    }
+
     private UhidManager getUhidManager() {
         if (uhidManager == null) {
             uhidManager = new UhidManager(sender);
@@ -166,7 +174,7 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
 
     private void control() throws IOException {
         // on start, power on the device
-        if (powerOn && displayId != Device.DISPLAY_ID_NONE && !Device.isScreenOn()) {
+        if (powerOn && displayId == 0 && !Device.isScreenOn(displayId)) {
             Device.pressReleaseKeycode(KeyEvent.KEYCODE_POWER, displayId, Device.INJECT_MODE_ASYNC);
 
             // dirty hack
@@ -270,18 +278,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             case ControlMessage.TYPE_SET_CLIPBOARD:
                 setClipboard(msg.getText(), msg.getPaste(), msg.getSequence());
                 break;
-            case ControlMessage.TYPE_SET_SCREEN_POWER_MODE:
-                if (supportsInputEvents) {
-                    int mode = msg.getAction();
-                    boolean setPowerModeOk = Device.setScreenPowerMode(mode);
-                    if (setPowerModeOk) {
-                        keepPowerModeOff = mode == Device.POWER_MODE_OFF;
-                        Ln.i("Device screen turned " + (mode == Device.POWER_MODE_OFF ? "off" : "on"));
-                        if (cleanUp != null) {
-                            boolean mustRestoreOnExit = mode != Device.POWER_MODE_NORMAL;
-                            cleanUp.setRestoreNormalPowerMode(mustRestoreOnExit);
-                        }
-                    }
+            case ControlMessage.TYPE_SET_DISPLAY_POWER:
+                if (supportsInputEvents && displayId != Device.DISPLAY_ID_NONE) {
+                    setDisplayPower(msg.getOn());
                 }
                 break;
             case ControlMessage.TYPE_ROTATE_DEVICE:
@@ -302,6 +301,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             case ControlMessage.TYPE_START_APP:
                 startAppAsync(msg.getText());
                 break;
+            case ControlMessage.TYPE_RESET_VIDEO:
+                resetVideo();
+                break;
             default:
                 // do nothing
         }
@@ -310,8 +312,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     }
 
     private boolean injectKeycode(int action, int keycode, int repeat, int metaState) {
-        if (keepPowerModeOff && action == KeyEvent.ACTION_UP && (keycode == KeyEvent.KEYCODE_POWER || keycode == KeyEvent.KEYCODE_WAKEUP)) {
-            schedulePowerModeOff();
+        if (keepDisplayPowerOff && action == KeyEvent.ACTION_UP && (keycode == KeyEvent.KEYCODE_POWER || keycode == KeyEvent.KEYCODE_WAKEUP)) {
+            assert displayId != Device.DISPLAY_ID_NONE;
+            scheduleDisplayPowerOff(displayId);
         }
         return injectKeyEvent(action, keycode, repeat, metaState, Device.INJECT_MODE_ASYNC);
     }
@@ -488,17 +491,17 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
     }
 
     /**
-     * Schedule a call to set power mode to off after a small delay.
+     * Schedule a call to set display power to off after a small delay.
      */
-    private static void schedulePowerModeOff() {
+    private static void scheduleDisplayPowerOff(int displayId) {
         EXECUTOR.schedule(() -> {
-            Ln.i("Forcing screen off");
-            Device.setScreenPowerMode(Device.POWER_MODE_OFF);
+            Ln.i("Forcing display off");
+            Device.setDisplayPower(displayId, false);
         }, 200, TimeUnit.MILLISECONDS);
     }
 
     private boolean pressBackOrTurnScreenOn(int action) {
-        if (Device.isScreenOn()) {
+        if (displayId == Device.DISPLAY_ID_NONE || Device.isScreenOn(displayId)) {
             return injectKeyEvent(action, KeyEvent.KEYCODE_BACK, 0, 0, Device.INJECT_MODE_ASYNC);
         }
 
@@ -509,8 +512,9 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             return true;
         }
 
-        if (keepPowerModeOff) {
-            schedulePowerModeOff();
+        if (keepDisplayPowerOff) {
+            assert displayId != Device.DISPLAY_ID_NONE;
+            scheduleDisplayPowerOff(displayId);
         }
         return pressReleaseKeycode(KeyEvent.KEYCODE_POWER, Device.INJECT_MODE_ASYNC);
     }
@@ -673,6 +677,25 @@ public class Controller implements AsyncProcessor, VirtualDisplayListener {
             }
 
             return data;
+        }
+    }
+
+    private void setDisplayPower(boolean on) {
+        boolean setDisplayPowerOk = Device.setDisplayPower(displayId, on);
+        if (setDisplayPowerOk) {
+            keepDisplayPowerOff = !on;
+            Ln.i("Device display turned " + (on ? "on" : "off"));
+            if (cleanUp != null) {
+                boolean mustRestoreOnExit = !on;
+                cleanUp.setRestoreDisplayPower(mustRestoreOnExit);
+            }
+        }
+    }
+
+    private void resetVideo() {
+        if (surfaceCapture != null) {
+            Ln.i("Video capture reset");
+            surfaceCapture.requestInvalidate();
         }
     }
 }

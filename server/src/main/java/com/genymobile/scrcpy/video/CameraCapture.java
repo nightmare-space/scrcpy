@@ -68,7 +68,7 @@ public class CameraCapture extends SurfaceCapture {
     }
 
     @Override
-    public void init() throws IOException {
+    protected void init() throws IOException {
         cameraThread = new HandlerThread("camera");
         cameraThread.start();
         cameraHandler = new Handler(cameraThread.getLooper());
@@ -256,7 +256,7 @@ public class CameraCapture extends SurfaceCapture {
             public void onDisconnected(CameraDevice camera) {
                 Ln.w("Camera disconnected");
                 disconnected.set(true);
-                requestReset();
+                invalidate();
             }
 
             @Override
@@ -354,5 +354,10 @@ public class CameraCapture extends SurfaceCapture {
     @Override
     public boolean isClosed() {
         return disconnected.get();
+    }
+
+    @Override
+    public void requestInvalidate() {
+        // do nothing (the user could not request a reset anyway for now, since there is no controller for camera mirroring)
     }
 }

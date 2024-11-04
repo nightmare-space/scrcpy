@@ -1,5 +1,6 @@
 package com.genymobile.scrcpy.wrappers;
 
+import com.genymobile.scrcpy.AndroidVersions;
 import com.genymobile.scrcpy.FakeContext;
 import com.genymobile.scrcpy.device.DisplayInfo;
 import com.genymobile.scrcpy.device.Size;
@@ -7,21 +8,46 @@ import com.genymobile.scrcpy.util.Command;
 import com.genymobile.scrcpy.util.Ln;
 
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.content.Context;
 import android.hardware.display.VirtualDisplay;
+import android.os.Handler;
 import android.view.Display;
 import android.view.Surface;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @SuppressLint("PrivateApi,DiscouragedPrivateApi")
 public final class DisplayManager {
+
+    // android.hardware.display.DisplayManager.EVENT_FLAG_DISPLAY_CHANGED
+    public static final long EVENT_FLAG_DISPLAY_CHANGED = 1L << 2;
+
+    public interface DisplayListener {
+        /**
+         * Called whenever the properties of a logical {@link android.view.Display},
+         * such as size and density, have changed.
+         *
+         * @param displayId The id of the logical display that changed.
+         */
+        void onDisplayChanged(int displayId);
+    }
+
+    public static final class DisplayListenerHandle {
+        private final Object displayListenerProxy;
+        private DisplayListenerHandle(Object displayListenerProxy) {
+            this.displayListenerProxy = displayListenerProxy;
+        }
+    }
+
     private final Object manager; // instance of hidden class android.hardware.display.DisplayManagerGlobal
     private Method createVirtualDisplayMethod;
+    private Method requestDisplayPowerMethod;
 
     static DisplayManager create() {
         try {
@@ -136,5 +162,69 @@ public final class DisplayManager {
         ctor.setAccessible(true);
         android.hardware.display.DisplayManager dm = ctor.newInstance(FakeContext.get());
         return dm.createVirtualDisplay(name, width, height, dpi, surface, flags);
+    }
+
+    private Method getRequestDisplayPowerMethod() throws NoSuchMethodException {
+        if (requestDisplayPowerMethod == null) {
+            requestDisplayPowerMethod = manager.getClass().getMethod("requestDisplayPower", int.class, boolean.class);
+        }
+        return requestDisplayPowerMethod;
+    }
+
+    @TargetApi(AndroidVersions.API_35_ANDROID_15)
+    public boolean requestDisplayPower(int displayId, boolean on) {
+        try {
+            Method method = getRequestDisplayPowerMethod();
+            return (boolean) method.invoke(manager, displayId, on);
+        } catch (ReflectiveOperationException e) {
+            Ln.e("Could not invoke method", e);
+            return false;
+        }
+    }
+
+    public DisplayListenerHandle registerDisplayListener(DisplayListener listener, Handler handler) {
+        try {
+            Class<?> displayListenerClass = Class.forName("android.hardware.display.DisplayManager$DisplayListener");
+            Object displayListenerProxy = Proxy.newProxyInstance(
+                    ClassLoader.getSystemClassLoader(),
+                    new Class[] {displayListenerClass},
+                    (proxy, method, args) -> {
+                        if ("onDisplayChanged".equals(method.getName())) {
+                            listener.onDisplayChanged((int) args[0]);
+                        }
+                        return null;
+                    });
+            try {
+                manager.getClass()
+                        .getMethod("registerDisplayListener", displayListenerClass, Handler.class, long.class, String.class)
+                        .invoke(manager, displayListenerProxy, handler, EVENT_FLAG_DISPLAY_CHANGED, FakeContext.PACKAGE_NAME);
+            } catch (NoSuchMethodException e) {
+                try {
+                    manager.getClass()
+                            .getMethod("registerDisplayListener", displayListenerClass, Handler.class, long.class)
+                            .invoke(manager, displayListenerProxy, handler, EVENT_FLAG_DISPLAY_CHANGED);
+                } catch (NoSuchMethodException e2) {
+                    manager.getClass()
+                            .getMethod("registerDisplayListener", displayListenerClass, Handler.class)
+                            .invoke(manager, displayListenerProxy, handler);
+                }
+            }
+
+            return new DisplayListenerHandle(displayListenerProxy);
+        } catch (Exception e) {
+            // Rotation and screen size won't be updated, not a fatal error
+            Ln.e("Could not register display listener", e);
+        }
+
+        return null;
+    }
+
+    public void unregisterDisplayListener(DisplayListenerHandle listener) {
+        try {
+            Class<?> displayListenerClass = Class.forName("android.hardware.display.DisplayManager$DisplayListener");
+            manager.getClass().getMethod("unregisterDisplayListener", displayListenerClass).invoke(manager, listener.displayListenerProxy);
+        } catch (Exception e) {
+            Ln.e("Could not unregister display listener", e);
+        }
     }
 }

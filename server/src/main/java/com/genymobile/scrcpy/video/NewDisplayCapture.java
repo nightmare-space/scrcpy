@@ -14,6 +14,8 @@ import android.hardware.display.VirtualDisplay;
 import android.os.Build;
 import android.view.Surface;
 
+import java.io.IOException;
+
 public class NewDisplayCapture extends SurfaceCapture {
 
     // Internal fields copied from android.hardware.display.DisplayManager
@@ -46,7 +48,7 @@ public class NewDisplayCapture extends SurfaceCapture {
     }
 
     @Override
-    public void init() {
+    protected void init() {
         size = newDisplay.getSize();
         dpi = newDisplay.getDpi();
         if (size == null || dpi == 0) {
@@ -72,13 +74,8 @@ public class NewDisplayCapture extends SurfaceCapture {
         }
     }
 
-    @Override
-    public void start(Surface surface) {
-        if (virtualDisplay != null) {
-            virtualDisplay.release();
-            virtualDisplay = null;
-        }
 
+    public void startNew(Surface surface) {
         int virtualDisplayId;
         try {
             int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
@@ -93,8 +90,8 @@ public class NewDisplayCapture extends SurfaceCapture {
                         | VIRTUAL_DISPLAY_FLAG_ALWAYS_UNLOCKED
                         | VIRTUAL_DISPLAY_FLAG_TOUCH_FEEDBACK_DISABLED;
                 if (Build.VERSION.SDK_INT >= AndroidVersions.API_34_ANDROID_14) {
-                     flags |= VIRTUAL_DISPLAY_FLAG_OWN_FOCUS
-                             | VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP;
+                    flags |= VIRTUAL_DISPLAY_FLAG_OWN_FOCUS
+                            | VIRTUAL_DISPLAY_FLAG_DEVICE_DISPLAY_GROUP;
                 }
             }
             virtualDisplay = ServiceManager.getDisplayManager()
@@ -107,10 +104,18 @@ public class NewDisplayCapture extends SurfaceCapture {
         }
 
         if (vdListener != null) {
-            virtualDisplayId = virtualDisplay.getDisplay().getDisplayId();
             Rect contentRect = new Rect(0, 0, size.getWidth(), size.getHeight());
             PositionMapper positionMapper = new PositionMapper(size, contentRect, 0);
             vdListener.onNewVirtualDisplay(virtualDisplayId, positionMapper);
+        }
+    }
+
+    @Override
+    public void start(Surface surface) throws IOException {
+        if (virtualDisplay == null) {
+            startNew(surface);
+        } else {
+            virtualDisplay.setSurface(surface);
         }
     }
 
@@ -142,5 +147,10 @@ public class NewDisplayCapture extends SurfaceCapture {
         int den = initialSize.getMax();
         int num = size.getMax();
         return initialDpi * num / den;
+    }
+
+    @Override
+    public void requestInvalidate() {
+        invalidate();
     }
 }

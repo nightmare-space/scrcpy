@@ -42,6 +42,8 @@ public final class Device {
 
     public static final int LOCK_VIDEO_ORIENTATION_UNLOCKED = -1;
     public static final int LOCK_VIDEO_ORIENTATION_INITIAL = -2;
+    // like SC_LOCK_VIDEO_ORIENTATION_INITIAL, but set automatically
+    public static final int LOCK_VIDEO_ORIENTATION_INITIAL_AUTO = -3;
 
     private Device() {
         // not instantiable
@@ -80,8 +82,9 @@ public final class Device {
                 && injectKeyEvent(KeyEvent.ACTION_UP, keyCode, 0, 0, displayId, injectMode);
     }
 
-    public static boolean isScreenOn() {
-        return ServiceManager.getPowerManager().isScreenOn();
+    public static boolean isScreenOn(int displayId) {
+        assert displayId != DISPLAY_ID_NONE;
+        return ServiceManager.getPowerManager().isScreenOn(displayId);
     }
 
     public static void expandNotificationPanel() {
@@ -126,10 +129,13 @@ public final class Device {
         return clipboardManager.setText(text);
     }
 
-    /**
-     * @param mode one of the {@code POWER_MODE_*} constants
-     */
-    public static boolean setScreenPowerMode(int mode) {
+    public static boolean setDisplayPower(int displayId, boolean on) {
+        assert displayId != Device.DISPLAY_ID_NONE;
+
+        if (Build.VERSION.SDK_INT >= AndroidVersions.API_35_ANDROID_15) {
+            return ServiceManager.getDisplayManager().requestDisplayPower(displayId, on);
+        }
+
         boolean applyToMultiPhysicalDisplays = Build.VERSION.SDK_INT >= AndroidVersions.API_29_ANDROID_10;
 
         if (applyToMultiPhysicalDisplays
@@ -142,6 +148,7 @@ public final class Device {
             applyToMultiPhysicalDisplays = false;
         }
 
+        int mode = on ? POWER_MODE_NORMAL : POWER_MODE_OFF;
         if (applyToMultiPhysicalDisplays) {
             // On Android 14, these internal methods have been moved to DisplayControl
             boolean useDisplayControl =
@@ -175,7 +182,7 @@ public final class Device {
     public static boolean powerOffScreen(int displayId) {
         assert displayId != DISPLAY_ID_NONE;
 
-        if (!isScreenOn()) {
+        if (!isScreenOn(displayId)) {
             return true;
         }
         return pressReleaseKeycode(KeyEvent.KEYCODE_POWER, displayId, Device.INJECT_MODE_ASYNC);

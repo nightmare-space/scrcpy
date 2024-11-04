@@ -1,19 +1,26 @@
 package com.genymobile.scrcpy.util;
 
+import com.genymobile.scrcpy.AndroidVersions;
+import com.genymobile.scrcpy.audio.AudioCodec;
 import com.genymobile.scrcpy.device.Device;
 import com.genymobile.scrcpy.device.DeviceApp;
 import com.genymobile.scrcpy.device.DisplayInfo;
 import com.genymobile.scrcpy.device.Size;
+import com.genymobile.scrcpy.video.VideoCodec;
 import com.genymobile.scrcpy.wrappers.DisplayManager;
 import com.genymobile.scrcpy.wrappers.ServiceManager;
 
 import android.annotation.SuppressLint;
+import android.annotation.TargetApi;
 import android.graphics.Rect;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
+import android.os.Build;
 import android.util.Range;
 
 import java.util.Collections;
@@ -28,32 +35,54 @@ public final class LogUtils {
         // not instantiable
     }
 
-    public static String buildVideoEncoderListMessage() {
-        StringBuilder builder = new StringBuilder("List of video encoders:");
-        List<CodecUtils.DeviceEncoder> videoEncoders = CodecUtils.listVideoEncoders();
-        if (videoEncoders.isEmpty()) {
-            builder.append("\n    (none)");
-        } else {
-            for (CodecUtils.DeviceEncoder encoder : videoEncoders) {
-                builder.append("\n    --video-codec=").append(encoder.getCodec().getName());
-                builder.append(" --video-encoder=").append(encoder.getInfo().getName());
+    private static String buildEncoderListMessage(String type, Codec[] codecs) {
+        StringBuilder builder = new StringBuilder("List of ").append(type).append(" encoders:");
+        MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
+        for (Codec codec : codecs) {
+            MediaCodecInfo[] encoders = CodecUtils.getEncoders(codecList, codec.getMimeType());
+            for (MediaCodecInfo info : encoders) {
+                int lineStart = builder.length();
+                builder.append("\n    --").append(type).append("-codec=").append(codec.getName());
+                builder.append(" --").append(type).append("-encoder=").append(info.getName());
+                if (Build.VERSION.SDK_INT >= AndroidVersions.API_29_ANDROID_10) {
+                    int lineLength = builder.length() - lineStart;
+                    final int column = 70;
+                    if (lineLength < column) {
+                        int padding = column - lineLength;
+                        builder.append(String.format("%" + padding + "s", " "));
+                    }
+                    builder.append(" (").append(getHwCodecType(info)).append(')');
+                    if (info.isVendor()) {
+                        builder.append(" [vendor]");
+                    }
+                    if (info.isAlias()) {
+                        builder.append(" (alias for ").append(info.getCanonicalName()).append(')');
+                    }
+                }
+
             }
         }
+
         return builder.toString();
     }
 
+    public static String buildVideoEncoderListMessage() {
+        return buildEncoderListMessage("video", VideoCodec.values());
+    }
+
     public static String buildAudioEncoderListMessage() {
-        StringBuilder builder = new StringBuilder("List of audio encoders:");
-        List<CodecUtils.DeviceEncoder> audioEncoders = CodecUtils.listAudioEncoders();
-        if (audioEncoders.isEmpty()) {
-            builder.append("\n    (none)");
-        } else {
-            for (CodecUtils.DeviceEncoder encoder : audioEncoders) {
-                builder.append("\n    --audio-codec=").append(encoder.getCodec().getName());
-                builder.append(" --audio-encoder=").append(encoder.getInfo().getName());
-            }
+        return buildEncoderListMessage("audio", AudioCodec.values());
+    }
+
+    @TargetApi(AndroidVersions.API_29_ANDROID_10)
+    private static String getHwCodecType(MediaCodecInfo info) {
+        if (info.isSoftwareOnly()) {
+            return "sw";
         }
-        return builder.toString();
+        if (info.isHardwareAccelerated()) {
+            return "hw";
+        }
+        return "hybrid";
     }
 
     public static String buildDisplayListMessage() {
