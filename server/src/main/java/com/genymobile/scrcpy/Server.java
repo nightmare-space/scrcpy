@@ -292,11 +292,12 @@ public final class Server {
 
         Options options = Options.parse(args);
 
-        Ln.disableSystemStreams();
+//        Ln.disableSystemStreams();
         Ln.initLogLevel(options.getLogLevel());
 
+        Ln.i("test0");
         Ln.i("Device: [" + Build.MANUFACTURER + "] " + Build.BRAND + " " + Build.MODEL + " (Android " + Build.VERSION.RELEASE + ")");
-
+        Ln.i("test1");
         if (options.getList()) {
             if (options.getCleanup()) {
                 CleanUp.unlinkSelf();
