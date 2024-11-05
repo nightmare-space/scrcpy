@@ -34,8 +34,11 @@ public final class PositionMapper {
         Position devicePosition = position.rotate(coordsRotation);
 
         Size clientVideoSize = devicePosition.getScreenSize();
-        if (!videoSize.equals(clientVideoSize)) {
-            // The client sends a click relative to a video with wrong dimensions,
+        // Android MediaCodec may generate frames with dimensions slightly different from the video resolution
+        // (e.g. 1120x2480 instead of 1112x2480), so allow a small difference
+        if (Math.abs(videoSize.getWidth() - clientVideoSize.getWidth()) > 16
+                || Math.abs(videoSize.getHeight() - clientVideoSize.getHeight()) > 16) {
+            // The client sends a click relative to a video with dimensions outside the acceptable range,
             // the device may have been rotated since the event was generated, so ignore the event
             return null;
         }
