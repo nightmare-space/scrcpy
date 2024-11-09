@@ -2,9 +2,15 @@ package com.genymobile.scrcpy;
 
 import android.annotation.TargetApi;
 import android.content.AttributionSource;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.ContextWrapper;
+import android.content.IContentProvider;
+import android.os.Binder;
 import android.os.Process;
+
+import com.genymobile.scrcpy.wrappers.ActivityManager;
+import com.genymobile.scrcpy.wrappers.ServiceManager;
 
 public final class FakeContext extends ContextWrapper {
 
@@ -20,6 +26,33 @@ public final class FakeContext extends ContextWrapper {
     private FakeContext() {
         super(Workarounds.getSystemContext());
     }
+
+    private final ContentResolver contentProvider = new ContentResolver(this) {
+        @SuppressWarnings("unused")
+        public IContentProvider acquireProvider(Context context, String name) {
+            return (IContentProvider) ServiceManager.getActivityManager().getContentProviderExternal(name, new Binder());
+        }
+
+        @SuppressWarnings("unused")
+        public boolean releaseProvider(IContentProvider icp) {
+            return false;
+        }
+
+        @SuppressWarnings("unused")
+        protected IContentProvider acquireUnstableProvider(Context c, String name) {
+            return null;
+        }
+
+        @SuppressWarnings("unused")
+        public boolean releaseUnstableProvider(IContentProvider icp) {
+            return false;
+        }
+
+        @SuppressWarnings("unused")
+        public void unstableProviderDied(IContentProvider icp) {
+
+        }
+    };
 
     @Override
     public String getPackageName() {
@@ -48,5 +81,10 @@ public final class FakeContext extends ContextWrapper {
     @Override
     public Context getApplicationContext() {
         return this;
+    }
+
+    @Override
+    public ContentResolver getContentResolver() {
+        return contentProvider;
     }
 }

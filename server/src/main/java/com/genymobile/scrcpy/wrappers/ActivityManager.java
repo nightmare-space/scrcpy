@@ -64,7 +64,7 @@ public final class ActivityManager {
     }
 
     @TargetApi(AndroidVersions.API_29_ANDROID_10)
-    private ContentProvider getContentProviderExternal(String name, IBinder token) {
+    public Object getContentProviderExternal(String name, IBinder token) {
         try {
             Method method = getGetContentProviderExternalMethod();
             Object[] args;
@@ -83,15 +83,19 @@ public final class ActivityManager {
             // IContentProvider provider = providerHolder.provider;
             Field providerField = providerHolder.getClass().getDeclaredField("provider");
             providerField.setAccessible(true);
-            Object provider = providerField.get(providerHolder);
-            if (provider == null) {
-                return null;
-            }
-            return new ContentProvider(this, provider, name, token);
+            return providerField.get(providerHolder);
         } catch (ReflectiveOperationException e) {
             Ln.e("Could not invoke method", e);
             return null;
         }
+    }
+
+    private ContentProvider getContentProviderExternalInternal(String name, IBinder token) {
+        Object provider = getContentProviderExternal(name, token);
+        if (provider == null) {
+            return null;
+        }
+        return new ContentProvider(this, provider, name, token);
     }
 
     void removeContentProviderExternal(String name, IBinder token) {
@@ -104,7 +108,7 @@ public final class ActivityManager {
     }
 
     public ContentProvider createSettingsProvider() {
-        return getContentProviderExternal("settings", new Binder());
+        return getContentProviderExternalInternal("settings", new Binder());
     }
 
     private Method getStartActivityAsUserMethod() throws NoSuchMethodException, ClassNotFoundException {
