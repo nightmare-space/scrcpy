@@ -3,30 +3,32 @@ package com.genymobile.scrcpy.control;
 import com.genymobile.scrcpy.device.Point;
 import com.genymobile.scrcpy.device.Position;
 import com.genymobile.scrcpy.device.Size;
-import com.genymobile.scrcpy.video.ScreenInfo;
-
-import android.graphics.Rect;
+import com.genymobile.scrcpy.util.AffineMatrix;
 
 public final class PositionMapper {
 
     private final Size videoSize;
-    private final Rect contentRect;
-    private final int coordsRotation;
+    private final AffineMatrix videoToDeviceMatrix;
 
-    public PositionMapper(Size videoSize, Rect contentRect, int videoRotation) {
+    public PositionMapper(Size videoSize, AffineMatrix videoToDeviceMatrix) {
         this.videoSize = videoSize;
-        this.contentRect = contentRect;
-        this.coordsRotation = reverseRotation(videoRotation);
+        this.videoToDeviceMatrix = videoToDeviceMatrix;
     }
 
-    public static PositionMapper from(ScreenInfo screenInfo) {
-        // ignore the locked video orientation, the events will apply in coordinates considered in the physical device orientation
-        Size videoSize = screenInfo.getUnlockedVideoSize();
-        return new PositionMapper(videoSize, screenInfo.getContentRect(), screenInfo.getVideoRotation());
+    public static PositionMapper create(Size videoSize, AffineMatrix filterTransform, Size targetSize) {
+        boolean convertToPixels = !videoSize.equals(targetSize) || filterTransform != null;
+        AffineMatrix transform = filterTransform;
+        if (convertToPixels) {
+            AffineMatrix inputTransform = AffineMatrix.ndcFromPixels(videoSize);
+            AffineMatrix outputTransform = AffineMatrix.ndcToPixels(targetSize);
+            transform = outputTransform.multiply(transform).multiply(inputTransform);
+        }
+
+        return new PositionMapper(videoSize, transform);
     }
 
-    private static int reverseRotation(int rotation) {
-        return (4 - rotation) % 4;
+    public Size getVideoSize() {
+        return videoSize;
     }
 
     public Point map(Position position) {
@@ -43,9 +45,10 @@ public final class PositionMapper {
             return null;
         }
 
-        Point point = devicePosition.getPoint();
-        int convertedX = contentRect.left + point.getX() * contentRect.width() / videoSize.getWidth();
-        int convertedY = contentRect.top + point.getY() * contentRect.height() / videoSize.getHeight();
-        return new Point(convertedX, convertedY);
+        Point point = position.getPoint();
+        if (videoToDeviceMatrix != null) {
+            point = videoToDeviceMatrix.apply(point);
+        }
+        return point;
     }
 }

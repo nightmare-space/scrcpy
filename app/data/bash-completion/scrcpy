@@ -2,6 +2,7 @@ _scrcpy() {
     local cur prev words cword
     local opts="
         --always-on-top
+        --angle
         --audio-bit-rate=
         --audio-buffer=
         --audio-codec=
@@ -17,6 +18,7 @@ _scrcpy() {
         --camera-fps=
         --camera-high-speed
         --camera-size=
+        --capture-orientation=
         --crop=
         -d --select-usb
         --disable-screensaver
@@ -37,8 +39,6 @@ _scrcpy() {
         --list-cameras
         --list-displays
         --list-encoders
-        --lock-video-orientation
-        --lock-video-orientation=
         -m --max-size=
         -M
         --max-fps=
@@ -57,6 +57,8 @@ _scrcpy() {
         --no-mipmaps
         --no-mouse-hover
         --no-power-on
+        --no-vd-destroy-content
+        --no-vd-system-decorations
         --no-video
         --no-video-playback
         --orientation=
@@ -77,6 +79,7 @@ _scrcpy() {
         --rotation=
         -s --serial=
         -S --turn-screen-off
+        --screen-off-timeout=
         --shortcut-mod=
         --start-app=
         -t --show-touches
@@ -137,16 +140,16 @@ _scrcpy() {
             COMPREPLY=($(compgen -W 'disabled uhid aoa' -- "$cur"))
             return
             ;;
+        --capture-orientation)
+            COMPREPLY=($(compgen -W '0 90 180 270 flip0 flip90 flip180 flip270 @0 @90 @180 @270 @flip0 @flip90 @flip180 @flip270' -- "$cur"))
+            return
+            ;;
         --orientation|--display-orientation)
             COMPREPLY=($(compgen -W '0 90 180 270 flip0 flip90 flip180 flip270' -- "$cur"))
             return
             ;;
         --record-orientation)
             COMPREPLY=($(compgen -W '0 90 180 270' -- "$cur"))
-            return
-            ;;
-        --lock-video-orientation)
-            COMPREPLY=($(compgen -W 'unlocked initial 0 90 180 270' -- "$cur"))
             return
             ;;
         --pause-on-exit)
@@ -193,6 +196,7 @@ _scrcpy() {
         |--display-id \
         |--max-fps \
         |-m|--max-size \
+        |--new-display \
         |-p|--port \
         |--push-target \
         |--rotation \

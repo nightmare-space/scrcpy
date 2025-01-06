@@ -46,6 +46,7 @@ src = [
     'src/util/acksync.c',
     'src/util/audiobuf.c',
     'src/util/average.c',
+    'src/util/env.c',
     'src/util/file.c',
     'src/util/intmap.c',
     'src/util/intr.c',
@@ -109,20 +110,22 @@ endif
 
 cc = meson.get_compiler('c')
 
+static = get_option('static')
+
 dependencies = [
-    dependency('libavformat', version: '>= 57.33'),
-    dependency('libavcodec', version: '>= 57.37'),
-    dependency('libavutil'),
-    dependency('libswresample'),
-    dependency('sdl2', version: '>= 2.0.5'),
+    dependency('libavformat', version: '>= 57.33', static: static),
+    dependency('libavcodec', version: '>= 57.37', static: static),
+    dependency('libavutil', static: static),
+    dependency('libswresample', static: static),
+    dependency('sdl2', version: '>= 2.0.5', static: static),
 ]
 
 if v4l2_support
-    dependencies += dependency('libavdevice')
+    dependencies += dependency('libavdevice', static: static)
 endif
 
 if usb_support
-    dependencies += dependency('libusb-1.0')
+    dependencies += dependency('libusb-1.0', static: static)
 endif
 
 if host_machine.system() == 'windows'
@@ -166,9 +169,6 @@ conf.set('DEFAULT_LOCAL_PORT_RANGE_LAST', '27199')
 
 # run a server debugger and wait for a client to be attached
 conf.set('SERVER_DEBUGGER', get_option('server_debugger'))
-
-# select the debugger method ('old' for Android < 9, 'new' for Android >= 9)
-conf.set('SERVER_DEBUGGER_METHOD_NEW', get_option('server_debugger_method') == 'new')
 
 # enable V4L2 support (linux only)
 conf.set('HAVE_V4L2', v4l2_support)

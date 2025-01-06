@@ -15,6 +15,12 @@
 
 #define SC_ADB_SILENT (SC_ADB_NO_STDOUT | SC_ADB_NO_STDERR | SC_ADB_NO_LOGERR)
 
+bool
+sc_adb_init(void);
+
+void
+sc_adb_destroy(void);
+
 const char *
 sc_adb_get_executable(void);
 
@@ -113,5 +119,11 @@ sc_adb_getprop(struct sc_intr *intr, const char *serial, const char *prop,
  */
 char *
 sc_adb_get_device_ip(struct sc_intr *intr, const char *serial, unsigned flags);
+
+/**
+ * Return the device SDK version.
+ */
+uint16_t
+sc_adb_get_device_sdk_version(struct sc_intr *intr, const char *serial);
 
 #endif

@@ -4,10 +4,10 @@ DEPS_DIR=$(dirname ${BASH_SOURCE[0]})
 cd "$DEPS_DIR"
 . common
 
-VERSION=35.0.0
-FILENAME=platform-tools_r$VERSION-windows.zip
-PROJECT_DIR=platform-tools-$VERSION
-SHA256SUM=7ab78a8f8b305ae4d0de647d99c43599744de61a0838d3a47bda0cdffefee87e
+VERSION=35.0.2
+FILENAME=platform-tools_r$VERSION-win.zip
+PROJECT_DIR=platform-tools-$VERSION-windows
+SHA256SUM=2975a3eac0b19182748d64195375ad056986561d994fffbdc64332a516300bb9
 
 cd "$SOURCES_DIR"
 
@@ -27,6 +27,6 @@ else
     rmdir "$ZIP_PREFIX"
 fi
 
-mkdir -p "$INSTALL_DIR/$HOST/bin"
-cd "$INSTALL_DIR/$HOST/bin"
-cp -r "$SOURCES_DIR/$PROJECT_DIR"/. "$INSTALL_DIR/$HOST/bin/"
+mkdir -p "$INSTALL_DIR/adb-windows"
+cd "$INSTALL_DIR/adb-windows"
+cp -r "$SOURCES_DIR/$PROJECT_DIR"/. "$INSTALL_DIR/adb-windows/"

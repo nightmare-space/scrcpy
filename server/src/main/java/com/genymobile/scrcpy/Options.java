@@ -4,6 +4,7 @@ import com.genymobile.scrcpy.audio.AudioCodec;
 import com.genymobile.scrcpy.audio.AudioSource;
 import com.genymobile.scrcpy.device.Device;
 import com.genymobile.scrcpy.device.NewDisplay;
+import com.genymobile.scrcpy.device.Orientation;
 import com.genymobile.scrcpy.device.Size;
 import com.genymobile.scrcpy.util.CodecOption;
 import com.genymobile.scrcpy.util.Ln;
@@ -13,6 +14,7 @@ import com.genymobile.scrcpy.video.VideoCodec;
 import com.genymobile.scrcpy.video.VideoSource;
 
 import android.graphics.Rect;
+import android.util.Pair;
 
 import java.util.List;
 import java.util.Locale;
@@ -32,7 +34,7 @@ public class Options {
     private int videoBitRate = 8000000;
     private int audioBitRate = 128000;
     private float maxFps;
-    private int lockVideoOrientation = Device.LOCK_VIDEO_ORIENTATION_UNLOCKED;
+    private float angle;
     private boolean tunnelForward;
     private Rect crop;
     private boolean control = true;
@@ -45,6 +47,7 @@ public class Options {
     private boolean cameraHighSpeed;
     private boolean showTouches;
     private boolean stayAwake;
+    private int screenOffTimeout = -1;
     private List<CodecOption> videoCodecOptions;
     private List<CodecOption> audioCodecOptions;
 
@@ -57,6 +60,11 @@ public class Options {
     private boolean powerOn = true;
 
     private NewDisplay newDisplay;
+    private boolean vdDestroyContent = true;
+    private boolean vdSystemDecorations = true;
+
+    private Orientation.Lock captureOrientationLock = Orientation.Lock.Unlocked;
+    private Orientation captureOrientation = Orientation.Orient0;
 
     private boolean listEncoders;
     private boolean listDisplays;
@@ -122,8 +130,8 @@ public class Options {
         return maxFps;
     }
 
-    public int getLockVideoOrientation() {
-        return lockVideoOrientation;
+    public float getAngle() {
+        return angle;
     }
 
     public boolean isTunnelForward() {
@@ -174,6 +182,10 @@ public class Options {
         return stayAwake;
     }
 
+    public int getScreenOffTimeout() {
+        return screenOffTimeout;
+    }
+
     public List<CodecOption> getVideoCodecOptions() {
         return videoCodecOptions;
     }
@@ -214,6 +226,22 @@ public class Options {
         return newDisplay;
     }
 
+    public Orientation getCaptureOrientation() {
+        return captureOrientation;
+    }
+
+    public Orientation.Lock getCaptureOrientationLock() {
+        return captureOrientationLock;
+    }
+
+    public boolean getVDDestroyContent() {
+        return vdDestroyContent;
+    }
+
+    public boolean getVDSystemDecorations() {
+        return vdSystemDecorations;
+    }
+
     public boolean getList() {
         return listEncoders || listDisplays || listCameras || listCameraSizes || listApps;
     }
@@ -252,10 +280,6 @@ public class Options {
 
     public boolean getSendCodecMeta() {
         return sendCodecMeta;
-    }
-
-    public void resetLockVideoOrientation() {
-        this.lockVideoOrientation = Device.LOCK_VIDEO_ORIENTATION_UNLOCKED;
     }
 
     @SuppressWarnings("MethodLength")
@@ -340,8 +364,8 @@ public class Options {
                 case "max_fps":
                     options.maxFps = parseFloat("max_fps", value);
                     break;
-                case "lock_video_orientation":
-                    options.lockVideoOrientation = Integer.parseInt(value);
+                case "angle":
+                    options.angle = parseFloat("angle", value);
                     break;
                 case "tunnel_forward":
                     options.tunnelForward = Boolean.parseBoolean(value);
@@ -362,6 +386,12 @@ public class Options {
                     break;
                 case "stay_awake":
                     options.stayAwake = Boolean.parseBoolean(value);
+                    break;
+                case "screen_off_timeout":
+                    options.screenOffTimeout = Integer.parseInt(value);
+                    if (options.screenOffTimeout < -1) {
+                        throw new IllegalArgumentException("Invalid screen off timeout: " + options.screenOffTimeout);
+                    }
                     break;
                 case "video_codec_options":
                     options.videoCodecOptions = CodecOption.parse(value);
@@ -441,6 +471,17 @@ public class Options {
                 case "new_display":
                     options.newDisplay = parseNewDisplay(value);
                     break;
+                case "vd_destroy_content":
+                    options.vdDestroyContent = Boolean.parseBoolean(value);
+                    break;
+                case "vd_system_decorations":
+                    options.vdSystemDecorations = Boolean.parseBoolean(value);
+                    break;
+                case "capture_orientation":
+                    Pair<Orientation.Lock, Orientation> pair = parseCaptureOrientation(value);
+                    options.captureOrientationLock = pair.first;
+                    options.captureOrientation = pair.second;
+                    break;
                 case "send_device_meta":
                     options.sendDeviceMeta = Boolean.parseBoolean(value);
                     break;
@@ -466,6 +507,11 @@ public class Options {
                     Ln.w("Unknown server option: " + key);
                     break;
             }
+        }
+
+        if (options.newDisplay != null) {
+            assert options.displayId == 0 : "Must not set both displayId and newDisplay";
+            options.displayId = Device.DISPLAY_ID_NONE;
         }
 
         return options;
@@ -558,5 +604,26 @@ public class Options {
         }
 
         return new NewDisplay(size, dpi);
+    }
+
+    private static Pair<Orientation.Lock, Orientation> parseCaptureOrientation(String value) {
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException("Empty capture orientation string");
+        }
+
+        Orientation.Lock lock;
+        if (value.charAt(0) == '@') {
+            // Consume '@'
+            value = value.substring(1);
+            if (value.isEmpty()) {
+                // Only '@': lock to the initial orientation (orientation is unused)
+                return Pair.create(Orientation.Lock.LockedInitial, Orientation.Orient0);
+            }
+            lock = Orientation.Lock.LockedValue;
+        } else {
+            lock = Orientation.Lock.Unlocked;
+        }
+
+        return Pair.create(lock, Orientation.getByName(value));
     }
 }

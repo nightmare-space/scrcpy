@@ -50,7 +50,8 @@ const struct scrcpy_options scrcpy_options_default = {
     .video_bit_rate = 0,
     .audio_bit_rate = 0,
     .max_fps = NULL,
-    .lock_video_orientation = SC_LOCK_VIDEO_ORIENTATION_UNLOCKED,
+    .capture_orientation = SC_ORIENTATION_0,
+    .capture_orientation_lock = SC_ORIENTATION_UNLOCKED,
     .display_orientation = SC_ORIENTATION_0,
     .record_orientation = SC_ORIENTATION_0,
     .window_x = SC_WINDOW_POSITION_UNDEFINED,
@@ -62,6 +63,7 @@ const struct scrcpy_options scrcpy_options_default = {
     .audio_buffer = -1, // depends on the audio format,
     .audio_output_buffer = SC_TICK_FROM_MS(5),
     .time_limit = 0,
+    .screen_off_timeout = -1,
 #ifdef HAVE_V4L2
     .v4l2_device = NULL,
     .v4l2_buffer = 0,
@@ -105,6 +107,9 @@ const struct scrcpy_options scrcpy_options_default = {
     .audio_dup = false,
     .new_display = NULL,
     .start_app = NULL,
+    .angle = NULL,
+    .vd_destroy_content = true,
+    .vd_system_decorations = true,
 };
 
 enum sc_orientation

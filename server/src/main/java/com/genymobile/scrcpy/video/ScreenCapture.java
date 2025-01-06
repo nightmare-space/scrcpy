@@ -1,25 +1,29 @@
 package com.genymobile.scrcpy.video;
 
 import com.genymobile.scrcpy.AndroidVersions;
+import com.genymobile.scrcpy.Options;
 import com.genymobile.scrcpy.control.PositionMapper;
 import com.genymobile.scrcpy.device.ConfigurationException;
+import com.genymobile.scrcpy.device.Device;
 import com.genymobile.scrcpy.device.DisplayInfo;
+import com.genymobile.scrcpy.device.Orientation;
 import com.genymobile.scrcpy.device.Size;
+import com.genymobile.scrcpy.opengl.AffineOpenGLFilter;
+import com.genymobile.scrcpy.opengl.OpenGLFilter;
+import com.genymobile.scrcpy.opengl.OpenGLRunner;
+import com.genymobile.scrcpy.util.AffineMatrix;
 import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.util.LogUtils;
-import com.genymobile.scrcpy.wrappers.DisplayManager;
 import com.genymobile.scrcpy.wrappers.ServiceManager;
 import com.genymobile.scrcpy.wrappers.SurfaceControl;
 
 import android.graphics.Rect;
 import android.hardware.display.VirtualDisplay;
 import android.os.Build;
-import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.IBinder;
-import android.view.IDisplayFoldListener;
-import android.view.IRotationWatcher;
 import android.view.Surface;
+
+import java.io.IOException;
 
 public class ScreenCapture extends SurfaceCapture {
 
@@ -27,88 +31,37 @@ public class ScreenCapture extends SurfaceCapture {
     private final int displayId;
     private int maxSize;
     private final Rect crop;
-    private final int lockVideoOrientation;
+    private Orientation.Lock captureOrientationLock;
+    private Orientation captureOrientation;
+    private final float angle;
 
     private DisplayInfo displayInfo;
-    private ScreenInfo screenInfo;
+    private Size videoSize;
 
-    // Source display size (before resizing/crop) for the current session
-    private Size sessionDisplaySize;
+    private final DisplaySizeMonitor displaySizeMonitor = new DisplaySizeMonitor();
 
     private IBinder display;
     private VirtualDisplay virtualDisplay;
 
-    private DisplayManager.DisplayListenerHandle displayListenerHandle;
-    private HandlerThread handlerThread;
+    private AffineMatrix transform;
+    private OpenGLRunner glRunner;
 
-    // On Android 14, the DisplayListener may be broken (it never sends events). This is fixed in recent Android 14 upgrades, but we can't really
-    // detect it directly, so register a RotationWatcher and a DisplayFoldListener as a fallback, until we receive the first event from
-    // DisplayListener (which proves that it works).
-    private boolean displayListenerWorks; // only accessed from the display listener thread
-    private IRotationWatcher rotationWatcher;
-    private IDisplayFoldListener displayFoldListener;
-
-    public ScreenCapture(VirtualDisplayListener vdListener, int displayId, int maxSize, Rect crop, int lockVideoOrientation) {
+    public ScreenCapture(VirtualDisplayListener vdListener, Options options) {
         this.vdListener = vdListener;
-        this.displayId = displayId;
-        this.maxSize = maxSize;
-        this.crop = crop;
-        this.lockVideoOrientation = lockVideoOrientation;
+        this.displayId = options.getDisplayId();
+        assert displayId != Device.DISPLAY_ID_NONE;
+        this.maxSize = options.getMaxSize();
+        this.crop = options.getCrop();
+        this.captureOrientationLock = options.getCaptureOrientationLock();
+        this.captureOrientation = options.getCaptureOrientation();
+        assert captureOrientationLock != null;
+        assert captureOrientation != null;
+        this.angle = options.getAngle();
     }
 
     @Override
     public void init() {
-        if (Build.VERSION.SDK_INT == AndroidVersions.API_34_ANDROID_14) {
-            registerDisplayListenerFallbacks();
-        }
-
-        handlerThread = new HandlerThread("DisplayListener");
-        handlerThread.start();
-        Handler handler = new Handler(handlerThread.getLooper());
-        displayListenerHandle = ServiceManager.getDisplayManager().registerDisplayListener(displayId -> {
-            if (Ln.isEnabled(Ln.Level.VERBOSE)) {
-                Ln.v("ScreenCapture: onDisplayChanged(" + displayId + ")");
-            }
-            if (Build.VERSION.SDK_INT == AndroidVersions.API_34_ANDROID_14) {
-                if (!displayListenerWorks) {
-                    // On the first display listener event, we know it works, we can unregister the fallbacks
-                    displayListenerWorks = true;
-                    unregisterDisplayListenerFallbacks();
-                }
-            }
-            if (this.displayId == displayId) {
-                DisplayInfo di = ServiceManager.getDisplayManager().getDisplayInfo(displayId);
-                if (di == null) {
-                    Ln.w("DisplayInfo for " + displayId + " cannot be retrieved");
-                    // We can't compare with the current size, so reset unconditionally
-                    if (Ln.isEnabled(Ln.Level.VERBOSE)) {
-                        Ln.v("ScreenCapture: requestReset(): " + getSessionDisplaySize() + " -> (unknown)");
-                    }
-                    setSessionDisplaySize(null);
-                    invalidate();
-                } else {
-                    Size size = di.getSize();
-
-                    // The field is hidden on purpose, to read it with synchronization
-                    @SuppressWarnings("checkstyle:HiddenField")
-                    Size sessionDisplaySize = getSessionDisplaySize(); // synchronized
-
-                    // .equals() also works if sessionDisplaySize == null
-                    if (!size.equals(sessionDisplaySize)) {
-                        // Reset only if the size is different
-                        if (Ln.isEnabled(Ln.Level.VERBOSE)) {
-                            Ln.v("ScreenCapture: requestReset(): " + sessionDisplaySize + " -> " + size);
-                        }
-                        // Set the new size immediately, so that a future onDisplayChanged() event called before the asynchronous prepare()
-                        // considers that the current size is the requested size (to avoid a duplicate requestReset())
-                        setSessionDisplaySize(size);
-                        invalidate();
-                    } else if (Ln.isEnabled(Ln.Level.VERBOSE)) {
-                        Ln.v("ScreenCapture: Size not changed (" + size + "): do not requestReset()");
-                    }
-                }
-            }
-        }, handler);
+        displaySizeMonitor.start(displayId, this::invalidate);
     }
 
     @Override
@@ -123,12 +76,32 @@ public class ScreenCapture extends SurfaceCapture {
             Ln.w("Display doesn't have FLAG_SUPPORTS_PROTECTED_BUFFERS flag, mirroring can be restricted");
         }
 
-        setSessionDisplaySize(displayInfo.getSize());
-        screenInfo = ScreenInfo.computeScreenInfo(displayInfo.getRotation(), displayInfo.getSize(), crop, maxSize, lockVideoOrientation);
+        Size displaySize = displayInfo.getSize();
+        displaySizeMonitor.setSessionDisplaySize(displaySize);
+
+        if (captureOrientationLock == Orientation.Lock.LockedInitial) {
+            // The user requested to lock the video orientation to the current orientation
+            captureOrientationLock = Orientation.Lock.LockedValue;
+            captureOrientation = Orientation.fromRotation(displayInfo.getRotation());
+        }
+
+        VideoFilter filter = new VideoFilter(displaySize);
+
+        if (crop != null) {
+            boolean transposed = (displayInfo.getRotation() % 2) != 0;
+            filter.addCrop(crop, transposed);
+        }
+
+        boolean locked = captureOrientationLock != Orientation.Lock.Unlocked;
+        filter.addOrientation(displayInfo.getRotation(), locked, captureOrientation);
+        filter.addAngle(angle);
+
+        transform = filter.getInverseTransform();
+        videoSize = filter.getOutputSize().limit(maxSize).round8();
     }
 
     @Override
-    public void start(Surface surface) {
+    public void start(Surface surface) throws IOException {
         if (display != null) {
             SurfaceControl.destroyDisplay(display);
             display = null;
@@ -138,31 +111,30 @@ public class ScreenCapture extends SurfaceCapture {
             virtualDisplay = null;
         }
 
-        int virtualDisplayId;
-        PositionMapper positionMapper;
+        Size inputSize;
+        if (transform != null) {
+            // If there is a filter, it must receive the full display content
+            inputSize = displayInfo.getSize();
+            assert glRunner == null;
+            OpenGLFilter glFilter = new AffineOpenGLFilter(transform);
+            glRunner = new OpenGLRunner(glFilter);
+            surface = glRunner.start(inputSize, videoSize, surface);
+        } else {
+            // If there is no filter, the display must be rendered at target video size directly
+            inputSize = videoSize;
+        }
+
         try {
-            Size videoSize = screenInfo.getVideoSize();
             virtualDisplay = ServiceManager.getDisplayManager()
-                    .createVirtualDisplay("scrcpy", videoSize.getWidth(), videoSize.getHeight(), displayId, surface);
-            virtualDisplayId = virtualDisplay.getDisplay().getDisplayId();
-            Rect contentRect = new Rect(0, 0, videoSize.getWidth(), videoSize.getHeight());
-            // The position are relative to the virtual display, not the original display
-            positionMapper = new PositionMapper(videoSize, contentRect, 0);
+                    .createVirtualDisplay("scrcpy", inputSize.getWidth(), inputSize.getHeight(), displayId, surface);
             Ln.d("Display: using DisplayManager API");
         } catch (Exception displayManagerException) {
             try {
                 display = createDisplay();
 
-                Rect contentRect = screenInfo.getContentRect();
-
-                // does not include the locked video orientation
-                Rect unlockedVideoRect = screenInfo.getUnlockedVideoSize().toRect();
-                int videoRotation = screenInfo.getVideoRotation();
+                Size deviceSize = displayInfo.getSize();
                 int layerStack = displayInfo.getLayerStack();
-
-                setDisplaySurface(display, surface, videoRotation, contentRect, unlockedVideoRect, layerStack);
-                virtualDisplayId = displayId;
-                positionMapper = PositionMapper.from(screenInfo);
+                setDisplaySurface(display, surface, deviceSize.toRect(), inputSize.toRect(), layerStack);
                 Ln.d("Display: using SurfaceControl API");
             } catch (Exception surfaceControlException) {
                 Ln.e("Could not create display using DisplayManager", displayManagerException);
@@ -172,24 +144,33 @@ public class ScreenCapture extends SurfaceCapture {
         }
 
         if (vdListener != null) {
+            int virtualDisplayId;
+            PositionMapper positionMapper;
+            if (virtualDisplay == null || displayId == 0) {
+                // Surface control or main display: send all events to the original display, relative to the device size
+                Size deviceSize = displayInfo.getSize();
+                positionMapper = PositionMapper.create(videoSize, transform, deviceSize);
+                virtualDisplayId = displayId;
+            } else {
+                // The positions are relative to the virtual display, not the original display (so use inputSize, not deviceSize!)
+                positionMapper = PositionMapper.create(videoSize, transform, inputSize);
+                virtualDisplayId = virtualDisplay.getDisplay().getDisplayId();
+            }
             vdListener.onNewVirtualDisplay(virtualDisplayId, positionMapper);
         }
     }
 
     @Override
+    public void stop() {
+        if (glRunner != null) {
+            glRunner.stopAndRelease();
+            glRunner = null;
+        }
+    }
+
+    @Override
     public void release() {
-        if (Build.VERSION.SDK_INT == AndroidVersions.API_34_ANDROID_14) {
-            unregisterDisplayListenerFallbacks();
-        }
-
-        handlerThread.quitSafely();
-        handlerThread = null;
-
-        // displayListenerHandle may be null if registration failed
-        if (displayListenerHandle != null) {
-            ServiceManager.getDisplayManager().unregisterDisplayListener(displayListenerHandle);
-            displayListenerHandle = null;
-        }
+        displaySizeMonitor.stopAndRelease();
 
         if (display != null) {
             SurfaceControl.destroyDisplay(display);
@@ -203,7 +184,7 @@ public class ScreenCapture extends SurfaceCapture {
 
     @Override
     public Size getSize() {
-        return screenInfo.getVideoSize();
+        return videoSize;
     }
 
     @Override
@@ -220,75 +201,14 @@ public class ScreenCapture extends SurfaceCapture {
         return SurfaceControl.createDisplay("scrcpy", secure);
     }
 
-    private static void setDisplaySurface(IBinder display, Surface surface, int orientation, Rect deviceRect, Rect displayRect, int layerStack) {
+    private static void setDisplaySurface(IBinder display, Surface surface, Rect deviceRect, Rect displayRect, int layerStack) {
         SurfaceControl.openTransaction();
         try {
             SurfaceControl.setDisplaySurface(display, surface);
-            SurfaceControl.setDisplayProjection(display, orientation, deviceRect, displayRect);
+            SurfaceControl.setDisplayProjection(display, 0, deviceRect, displayRect);
             SurfaceControl.setDisplayLayerStack(display, layerStack);
         } finally {
             SurfaceControl.closeTransaction();
-        }
-    }
-
-    private synchronized Size getSessionDisplaySize() {
-        return sessionDisplaySize;
-    }
-
-    private synchronized void setSessionDisplaySize(Size sessionDisplaySize) {
-        this.sessionDisplaySize = sessionDisplaySize;
-    }
-
-    private void registerDisplayListenerFallbacks() {
-        rotationWatcher = new IRotationWatcher.Stub() {
-            @Override
-            public void onRotationChanged(int rotation) {
-                if (Ln.isEnabled(Ln.Level.VERBOSE)) {
-                    Ln.v("ScreenCapture: onRotationChanged(" + rotation + ")");
-                }
-                invalidate();
-            }
-        };
-        ServiceManager.getWindowManager().registerRotationWatcher(rotationWatcher, displayId);
-
-        // Build.VERSION.SDK_INT >= AndroidVersions.API_29_ANDROID_10 (but implied by == API_34_ANDROID 14)
-        displayFoldListener = new IDisplayFoldListener.Stub() {
-
-            private boolean first = true;
-
-            @Override
-            public void onDisplayFoldChanged(int displayId, boolean folded) {
-                if (first) {
-                    // An event is posted on registration to signal the initial state. Ignore it to avoid restarting encoding.
-                    first = false;
-                    return;
-                }
-
-                if (Ln.isEnabled(Ln.Level.VERBOSE)) {
-                    Ln.v("ScreenCapture: onDisplayFoldChanged(" + displayId + ", " + folded + ")");
-                }
-
-                if (ScreenCapture.this.displayId != displayId) {
-                    // Ignore events related to other display ids
-                    return;
-                }
-                invalidate();
-            }
-        };
-        ServiceManager.getWindowManager().registerDisplayFoldListener(displayFoldListener);
-    }
-
-    private void unregisterDisplayListenerFallbacks() {
-        synchronized (this) {
-            if (rotationWatcher != null) {
-                ServiceManager.getWindowManager().unregisterRotationWatcher(rotationWatcher);
-                rotationWatcher = null;
-            }
-            if (displayFoldListener != null) {
-                // Build.VERSION.SDK_INT >= AndroidVersions.API_29_ANDROID_10 (but implied by == API_34_ANDROID 14)
-                ServiceManager.getWindowManager().unregisterDisplayFoldListener(displayFoldListener);
-                displayFoldListener = null;
-            }
         }
     }
 

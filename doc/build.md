@@ -77,7 +77,7 @@ pip3 install meson
 sudo dnf install https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
 
 # client build dependencies
-sudo dnf install SDL2-devel ffms2-devel libusb1-devel meson gcc make
+sudo dnf install SDL2-devel ffms2-devel libusb1-devel libavdevice-free-devel meson gcc make
 
 # server build dependencies
 sudo dnf install java-devel
@@ -233,10 +233,10 @@ install` must be run as root)._
 
 #### Option 2: Use prebuilt server
 
- - [`scrcpy-server-v2.7`][direct-scrcpy-server]  
-   <sub>SHA-256: `a23c5659f36c260f105c022d27bcb3eafffa26070e7baa9eda66d01377a1adba`</sub>
+ - [`scrcpy-server-v3.1`][direct-scrcpy-server]  
+   <sub>SHA-256: `958f0944a62f23b1f33a16e9eb14844c1a04b882ca175a738c16d23cb22b86c0`</sub>
 
-[direct-scrcpy-server]: https://github.com/Genymobile/scrcpy/releases/download/v2.7/scrcpy-server-v2.7
+[direct-scrcpy-server]: https://github.com/Genymobile/scrcpy/releases/download/v3.1/scrcpy-server-v3.1
 
 Download the prebuilt server somewhere, and specify its path during the Meson
 configuration:

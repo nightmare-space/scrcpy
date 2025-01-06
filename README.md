@@ -2,7 +2,7 @@
 source for the project. Do not download releases from random websites, even if
 their name contains `scrcpy`.**
 
-# scrcpy (v2.7)
+# scrcpy (v3.1)
 
 <img src="app/data/icon.svg" width="128" height="128" alt="scrcpy" align="right" />
 
@@ -74,8 +74,18 @@ Note that USB debugging is not required to run scrcpy in [OTG mode](doc/otg.md).
 ## Get the app
 
  - [Linux](doc/linux.md)
- - [Windows](doc/windows.md)
+ - [Windows](doc/windows.md) (read [how to run](doc/windows.md#run))
  - [macOS](doc/macos.md)
+
+
+## Must-know tips
+
+ - [Reducing resolution](doc/video.md#size) may greatly improve performance
+   (`scrcpy -m1024`)
+ - [_Right-click_](doc/mouse.md#mouse-bindings) triggers `BACK`
+ - [_Middle-click_](doc/mouse.md#mouse-bindings) triggers `HOME`
+ - <kbd>Alt</kbd>+<kbd>f</kbd> toggles [fullscreen](doc/window.md#fullscreen)
+ - There are many other [shortcuts](doc/shortcuts.md)
 
 
 ## Usage examples
@@ -141,7 +151,7 @@ documented in the following pages:
  - [Device](doc/device.md)
  - [Window](doc/window.md)
  - [Recording](doc/recording.md)
- - [Virtual display](doc/virtual_displays.md)
+ - [Virtual display](doc/virtual_display.md)
  - [Tunnels](doc/tunnels.md)
  - [OTG](doc/otg.md)
  - [Camera](doc/camera.md)
@@ -181,6 +191,7 @@ to your problem immediately.
 You can also use:
 
  - Reddit: [`r/scrcpy`](https://www.reddit.com/r/scrcpy)
+ - BlueSky: [`@scrcpy.bsky.social`](https://bsky.app/profile/scrcpy.bsky.social)
  - Twitter: [`@scrcpy_app`](https://twitter.com/scrcpy_app)
 
 
@@ -199,7 +210,7 @@ work][donate]:
 ## Licence
 
     Copyright (C) 2018 Genymobile
-    Copyright (C) 2018-2024 Romain Vimont
+    Copyright (C) 2018-2025 Romain Vimont
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.

@@ -9,6 +9,7 @@
 
 #include "adb/adb.h"
 #include "util/binary.h"
+#include "util/env.h"
 #include "util/file.h"
 #include "util/log.h"
 #include "util/net_intr.h"
@@ -25,35 +26,22 @@
 
 static char *
 get_server_path(void) {
-#ifdef __WINDOWS__
-    const wchar_t *server_path_env = _wgetenv(L"SCRCPY_SERVER_PATH");
-#else
-    const char *server_path_env = getenv("SCRCPY_SERVER_PATH");
-#endif
-    if (server_path_env) {
+    char *server_path = sc_get_env("SCRCPY_SERVER_PATH");
+    if (server_path) {
         // if the envvar is set, use it
-#ifdef __WINDOWS__
-        char *server_path = sc_str_from_wchars(server_path_env);
-#else
-        char *server_path = strdup(server_path_env);
-#endif
-        if (!server_path) {
-            LOG_OOM();
-            return NULL;
-        }
         LOGD("Using SCRCPY_SERVER_PATH: %s", server_path);
         return server_path;
     }
 
 #ifndef PORTABLE
     LOGD("Using server: " SC_SERVER_PATH_DEFAULT);
-    char *server_path = strdup(SC_SERVER_PATH_DEFAULT);
+    server_path = strdup(SC_SERVER_PATH_DEFAULT);
     if (!server_path) {
         LOG_OOM();
         return NULL;
     }
 #else
-    char *server_path = sc_file_get_local_path(SC_SERVER_FILENAME);
+    server_path = sc_file_get_local_path(SC_SERVER_FILENAME);
     if (!server_path) {
         LOGE("Could not get local file path, "
              "using " SC_SERVER_FILENAME " from current directory");
@@ -201,18 +189,31 @@ execute_server(struct sc_server *server,
     cmd[count++] = "app_process";
 
 #ifdef SERVER_DEBUGGER
+    uint16_t sdk_version = sc_adb_get_device_sdk_version(&server->intr, serial);
+    if (!sdk_version) {
+        LOGE("Could not determine SDK version");
+        return 0;
+    }
+
 # define SERVER_DEBUGGER_PORT "5005"
-    cmd[count++] =
-# ifdef SERVER_DEBUGGER_METHOD_NEW
-        /* Android 9 and above */
-        "-XjdwpProvider:internal -XjdwpOptions:transport=dt_socket,suspend=y,"
-        "server=y,address="
-# else
-        /* Android 8 and below */
-        "-agentlib:jdwp=transport=dt_socket,suspend=y,server=y,address="
-# endif
-            SERVER_DEBUGGER_PORT;
+    const char *dbg;
+    if (sdk_version < 28) {
+        // Android < 9
+        dbg = "-agentlib:jdwp=transport=dt_socket,suspend=y,server=y,address="
+              SERVER_DEBUGGER_PORT;
+    } else if (sdk_version < 30) {
+        // Android >= 9 && Android < 11
+        dbg = "-XjdwpProvider:internal -XjdwpOptions:transport=dt_socket,"
+              "suspend=y,server=y,address=" SERVER_DEBUGGER_PORT;
+    } else {
+        // Android >= 11
+        // Contrary to the other methods, this does not suspend on start.
+        // <https://github.com/Genymobile/scrcpy/pull/5466>
+        dbg = "-XjdwpProvider:adbconnection";
+    }
+    cmd[count++] = dbg;
 #endif
+
     cmd[count++] = "/"; // unused
     cmd[count++] = "com.genymobile.scrcpy.Server";
     cmd[count++] = SCRCPY_VERSION;
@@ -274,9 +275,21 @@ execute_server(struct sc_server *server,
         VALIDATE_STRING(params->max_fps);
         ADD_PARAM("max_fps=%s", params->max_fps);
     }
-    if (params->lock_video_orientation != SC_LOCK_VIDEO_ORIENTATION_UNLOCKED) {
-        ADD_PARAM("lock_video_orientation=%" PRIi8,
-                  params->lock_video_orientation);
+    if (params->angle) {
+        VALIDATE_STRING(params->angle);
+        ADD_PARAM("angle=%s", params->angle);
+    }
+    if (params->capture_orientation_lock != SC_ORIENTATION_UNLOCKED
+            || params->capture_orientation != SC_ORIENTATION_0) {
+        if (params->capture_orientation_lock == SC_ORIENTATION_LOCKED_INITIAL) {
+            ADD_PARAM("capture_orientation=@");
+        } else {
+            const char *orient =
+                sc_orientation_get_name(params->capture_orientation);
+            bool locked =
+                params->capture_orientation_lock != SC_ORIENTATION_UNLOCKED;
+            ADD_PARAM("capture_orientation=%s%s", locked ? "@" : "", orient);
+        }
     }
     if (server->tunnel.forward) {
         ADD_PARAM("tunnel_forward=true");
@@ -320,6 +333,11 @@ execute_server(struct sc_server *server,
     if (params->stay_awake) {
         ADD_PARAM("stay_awake=true");
     }
+    if (params->screen_off_timeout != -1) {
+        assert(params->screen_off_timeout >= 0);
+        uint64_t ms = SC_TICK_TO_MS(params->screen_off_timeout);
+        ADD_PARAM("screen_off_timeout=%" PRIu64, ms);
+    }
     if (params->video_codec_options) {
         VALIDATE_STRING(params->video_codec_options);
         ADD_PARAM("video_codec_options=%s", params->video_codec_options);
@@ -359,6 +377,12 @@ execute_server(struct sc_server *server,
         VALIDATE_STRING(params->new_display);
         ADD_PARAM("new_display=%s", params->new_display);
     }
+    if (!params->vd_destroy_content) {
+        ADD_PARAM("vd_destroy_content=false");
+    }
+    if (!params->vd_system_decorations) {
+        ADD_PARAM("vd_system_decorations=false");
+    }
     if (params->list & SC_OPTION_LIST_ENCODERS) {
         ADD_PARAM("list_encoders=true");
     }
@@ -380,10 +404,14 @@ execute_server(struct sc_server *server,
     cmd[count++] = NULL;
 
 #ifdef SERVER_DEBUGGER
-    LOGI("Server debugger waiting for a client on device port "
-         SERVER_DEBUGGER_PORT "...");
-    // From the computer, run
-    //     adb forward tcp:5005 tcp:5005
+    LOGI("Server debugger listening%s...",
+         sdk_version < 30 ? " on port " SERVER_DEBUGGER_PORT : "");
+    // For Android < 11, from the computer:
+    //     - run `adb forward tcp:5005 tcp:5005`
+    // For Android >= 11:
+    //     - execute `adb jdwp` to get the jdwp port
+    //     - run `adb forward tcp:5005 jdwp:XXXX` (replace XXXX)
+    //
     // Then, from Android Studio: Run > Debug > Edit configurations...
     // On the left, click on '+', "Remote", with:
     //     Host: localhost
@@ -460,14 +488,21 @@ sc_server_init(struct sc_server *server, const struct sc_server_params *params,
     // end of the program
     server->params = *params;
 
-    bool ok = sc_mutex_init(&server->mutex);
+    bool ok = sc_adb_init();
     if (!ok) {
+        return false;
+    }
+
+    ok = sc_mutex_init(&server->mutex);
+    if (!ok) {
+        sc_adb_destroy();
         return false;
     }
 
     ok = sc_cond_init(&server->cond_stopped);
     if (!ok) {
         sc_mutex_destroy(&server->mutex);
+        sc_adb_destroy();
         return false;
     }
 
@@ -475,6 +510,7 @@ sc_server_init(struct sc_server *server, const struct sc_server_params *params,
     if (!ok) {
         sc_cond_destroy(&server->cond_stopped);
         sc_mutex_destroy(&server->mutex);
+        sc_adb_destroy();
         return false;
     }
 
@@ -796,11 +832,14 @@ sc_server_switch_to_tcpip(struct sc_server *server, const char *serial) {
 }
 
 static bool
-sc_server_connect_to_tcpip(struct sc_server *server, const char *ip_port) {
+sc_server_connect_to_tcpip(struct sc_server *server, const char *ip_port,
+                           bool disconnect) {
     struct sc_intr *intr = &server->intr;
 
-    // Error expected if not connected, do not report any error
-    sc_adb_disconnect(intr, ip_port, SC_ADB_SILENT);
+    if (disconnect) {
+        // Error expected if not connected, do not report any error
+        sc_adb_disconnect(intr, ip_port, SC_ADB_SILENT);
+    }
 
     LOGI("Connecting to %s...", ip_port);
 
@@ -816,7 +855,7 @@ sc_server_connect_to_tcpip(struct sc_server *server, const char *ip_port) {
 
 static bool
 sc_server_configure_tcpip_known_address(struct sc_server *server,
-                                        const char *addr) {
+                                        const char *addr, bool disconnect) {
     // Append ":5555" if no port is present
     bool contains_port = strchr(addr, ':');
     char *ip_port = contains_port ? strdup(addr)
@@ -827,7 +866,7 @@ sc_server_configure_tcpip_known_address(struct sc_server *server,
     }
 
     server->serial = ip_port;
-    return sc_server_connect_to_tcpip(server, ip_port);
+    return sc_server_connect_to_tcpip(server, ip_port, disconnect);
 }
 
 static bool
@@ -852,7 +891,7 @@ sc_server_configure_tcpip_unknown_address(struct sc_server *server,
     }
 
     server->serial = ip_port;
-    return sc_server_connect_to_tcpip(server, ip_port);
+    return sc_server_connect_to_tcpip(server, ip_port, false);
 }
 
 static void
@@ -939,7 +978,13 @@ run_server(void *data) {
             sc_adb_device_destroy(&device);
         }
     } else {
-        ok = sc_server_configure_tcpip_known_address(server, params->tcpip_dst);
+        // If the user passed a '+' (--tcpip=+ip), then disconnect first
+        const char *tcpip_dst = params->tcpip_dst;
+        bool plus = tcpip_dst[0] == '+';
+        if (plus) {
+            ++tcpip_dst;
+        }
+        ok = sc_server_configure_tcpip_known_address(server, tcpip_dst, plus);
         if (!ok) {
             goto error_connection_failed;
         }
@@ -1116,4 +1161,6 @@ sc_server_destroy(struct sc_server *server) {
     sc_intr_destroy(&server->intr);
     sc_cond_destroy(&server->cond_stopped);
     sc_mutex_destroy(&server->mutex);
+
+    sc_adb_destroy();
 }

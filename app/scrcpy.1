@@ -20,6 +20,10 @@ provides display and control of Android devices connected on USB (or over TCP/IP
 Make scrcpy window always on top (above other windows).
 
 .TP
+.BI "\-\-angle " degrees
+Rotate the video content by a custom angle, in degrees (clockwise).
+
+.TP
 .BI "\-\-audio\-bit\-rate " value
 Encode the audio at the given bit rate, expressed in bits/s. Unit suffixes are supported: '\fBK\fR' (x1000) and '\fBM\fR' (x1000000).
 
@@ -94,18 +98,6 @@ Select the camera size by its aspect ratio (+/- 10%).
 Possible values are "sensor" (use the camera sensor aspect ratio), "\fInum\fR:\fIden\fR" (e.g. "4:3") and "\fIvalue\fR" (e.g. "1.6").
 
 .TP
-.B \-\-camera\-high\-speed
-Enable high-speed camera capture mode.
-
-This mode is restricted to specific resolutions and frame rates, listed by \fB\-\-list\-camera\-sizes\fR.
-
-.TP
-.BI "\-\-camera\-id " id
-Specify the device camera id to mirror.
-
-The available camera ids can be listed by \fB\-\-list\-cameras\fR.
-
-.TP
 .BI "\-\-camera\-facing " facing
 Select the device camera by its facing direction.
 
@@ -118,16 +110,38 @@ Specify the camera capture frame rate.
 If not specified, Android's default frame rate (30 fps) is used.
 
 .TP
+.B \-\-camera\-high\-speed
+Enable high-speed camera capture mode.
+
+This mode is restricted to specific resolutions and frame rates, listed by \fB\-\-list\-camera\-sizes\fR.
+
+.TP
+.BI "\-\-camera\-id " id
+Specify the device camera id to mirror.
+
+The available camera ids can be listed by \fB\-\-list\-cameras\fR.
+
+.TP
 .BI "\-\-camera\-size " width\fRx\fIheight
 Specify an explicit camera capture size.
+
+.TP
+.BI "\-\-capture\-orientation " value
+Possible values are 0, 90, 180, 270, flip0, flip90, flip180 and flip270, possibly prefixed by '@'.
+
+The number represents the clockwise rotation in degrees; the "flip" keyword applies a horizontal flip before the rotation.
+
+If a leading '@' is passed (@90) for display capture, then the rotation is locked, and is relative to the natural device orientation.
+
+If '@' is passed alone, then the rotation is locked to the initial device orientation.
+
+Default is 0.
 
 .TP
 .BI "\-\-crop " width\fR:\fIheight\fR:\fIx\fR:\fIy
 Crop the device screen on the server.
 
-The values are expressed in the device natural orientation (typically, portrait for a phone, landscape for a tablet). Any
-.B \-\-max\-size
-value is computed on the cropped size.
+The values are expressed in the device natural orientation (typically, portrait for a phone, landscape for a tablet).
 
 .TP
 .B \-d, \-\-select\-usb
@@ -242,16 +256,6 @@ List video and audio encoders available on the device.
 List displays available on the device.
 
 .TP
-\fB\-\-lock\-video\-orientation\fR[=\fIvalue\fR]
-Lock capture video orientation to \fIvalue\fR.
-
-Possible values are "unlocked", "initial" (locked to the initial orientation), 0, 90, 180, and 270. The values represent the clockwise rotation from the natural device orientation, in degrees.
-
-Default is "unlocked".
-
-Passing the option without argument is equivalent to passing "initial".
-
-.TP
 .BI "\-m, \-\-max\-size " value
 Limit both the width and height of the video to \fIvalue\fR. The other dimension is computed so that the device aspect\-ratio is preserved.
 
@@ -314,14 +318,13 @@ Disable video and audio playback on the computer (equivalent to \fB\-\-no\-video
 
 .TP
 \fB\-\-new\-display\fR[=[\fIwidth\fRx\fIheight\fR][/\fIdpi\fR]]
-Create a new display with the specified resolution and density. If not provided, they default to the main display dimensions and DPI, and \fB\-\-max\-size\fR is considered.
+Create a new display with the specified resolution and density. If not provided, they default to the main display dimensions and DPI.
 
 Examples:
 
     \-\-new\-display=1920x1080
     \-\-new\-display=1920x1080/420
     \-\-new\-display         # main display size and density
-    \-\-new\-display -m1920  # scaled to fit a max size of 1920
     \-\-new\-display=/240    # main display size and 240 dpi
 
 .TP
@@ -365,6 +368,16 @@ Do not forward mouse hover (mouse motion without any clicks) events.
 .TP
 .B \-\-no\-power\-on
 Do not power on the device on start.
+
+.TP
+.B \-\-no\-vd\-destroy\-content
+Disable virtual display "destroy content on removal" flag.
+
+With this option, when the virtual display is closed, the running apps are moved to the main display rather than being destroyed.
+
+.TP
+.B \-\-no\-vd\-system\-decorations
+Disable virtual display system decorations flag.
 
 .TP
 .B \-\-no\-video
@@ -511,12 +524,14 @@ Enable "show touches" on start, restore the initial value on exit.
 It only shows physical touches (not clicks from scrcpy).
 
 .TP
-.BI "\-\-tcpip\fR[=\fIip\fR[:\fIport\fR]]
-Configure and reconnect the device over TCP/IP.
+.BI "\-\-tcpip\fR[=[+]\fIip\fR[:\fIport\fR]]
+Configure and connect the device over TCP/IP.
 
 If a destination address is provided, then scrcpy connects to this address before starting. The device must listen on the given TCP port (default is 5555).
 
 If no destination address is provided, then scrcpy attempts to find the IP address and adb port of the current device (typically connected over USB), enables TCP/IP mode if necessary, then connects to this address before starting.
+
+Prefix the address with a '+' to force a reconnection.
 
 .TP
 .BI "\-\-time\-limit " seconds
@@ -547,8 +562,6 @@ Default is "info" for release builds, "debug" for debug builds.
 .TP
 .BI "\-\-v4l2-sink " /dev/videoN
 Output to v4l2loopback device.
-
-It requires to lock the video orientation (see \fB\-\-lock\-video\-orientation\fR).
 
 .TP
 .BI "\-\-v4l2-buffer " ms
@@ -816,7 +829,7 @@ Report bugs to <https://github.com/Genymobile/scrcpy/issues>.
 .SH COPYRIGHT
 Copyright \(co 2018 Genymobile <https://www.genymobile.com>
 
-Copyright \(co 2018\-2024 Romain Vimont <rom@rom1v.com>
+Copyright \(co 2018\-2025 Romain Vimont <rom@rom1v.com>
 
 Licensed under the Apache License, Version 2.0.
 

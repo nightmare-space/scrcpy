@@ -1,5 +1,7 @@
 package com.genymobile.scrcpy;
 
+import com.genymobile.scrcpy.wrappers.ServiceManager;
+
 import android.annotation.TargetApi;
 import android.content.AttributionSource;
 import android.content.ContentResolver;
@@ -22,6 +24,38 @@ public final class FakeContext extends ContextWrapper {
     public static FakeContext get() {
         return INSTANCE;
     }
+
+    private final ContentResolver contentResolver = new ContentResolver(this) {
+        @SuppressWarnings({"unused", "ProtectedMemberInFinalClass"})
+        // @Override (but super-class method not visible)
+        protected IContentProvider acquireProvider(Context c, String name) {
+            return ServiceManager.getActivityManager().getContentProviderExternal(name, new Binder());
+        }
+
+        @SuppressWarnings("unused")
+        // @Override (but super-class method not visible)
+        public boolean releaseProvider(IContentProvider icp) {
+            return false;
+        }
+
+        @SuppressWarnings({"unused", "ProtectedMemberInFinalClass"})
+        // @Override (but super-class method not visible)
+        protected IContentProvider acquireUnstableProvider(Context c, String name) {
+            return null;
+        }
+
+        @SuppressWarnings("unused")
+        // @Override (but super-class method not visible)
+        public boolean releaseUnstableProvider(IContentProvider icp) {
+            return false;
+        }
+
+        @SuppressWarnings("unused")
+        // @Override (but super-class method not visible)
+        public void unstableProviderDied(IContentProvider icp) {
+            // ignore
+        }
+    };
 
     private FakeContext() {
         super(Workarounds.getSystemContext());

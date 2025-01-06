@@ -13,10 +13,11 @@ set -e
 
 LOCAL_DIR=$(cd `dirname $0`; pwd)
 SCRCPY_DEBUG=false
-SCRCPY_VERSION_NAME=2.7
+SCRCPY_VERSION_NAME=3.1
 
 PLATFORM=${ANDROID_PLATFORM:-35}
 BUILD_TOOLS=${ANDROID_BUILD_TOOLS:-35.0.0}
+PLATFORM_TOOLS="$ANDROID_HOME/platforms/android-$PLATFORM"
 BUILD_TOOLS_DIR="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
 
 BUILD_DIR="$LOCAL_DIR/${BUILD_DIR:-build}"
@@ -24,7 +25,8 @@ CLASSES_DIR="$BUILD_DIR/classes"
 GEN_DIR="$BUILD_DIR/gen"
 SERVER_DIR=$(dirname "$0")
 SERVER_BINARY=scrcpy-server
-ANDROID_JAR="$ANDROID_HOME/platforms/android-$PLATFORM/android.jar"
+ANDROID_JAR="$PLATFORM_TOOLS/android.jar"
+ANDROID_AIDL="$PLATFORM_TOOLS/framework.aidl"
 LAMBDA_JAR="$BUILD_TOOLS_DIR/core-lambda-stubs.jar"
 
 echo "Platform: android-$PLATFORM"
@@ -50,12 +52,20 @@ cd "$SERVER_DIR/src/main/aidl"
 "$BUILD_TOOLS_DIR/aidl" -o"$GEN_DIR" -I. \
     android/content/IOnPrimaryClipChangedListener.aidl
 "$BUILD_TOOLS_DIR/aidl" -o"$GEN_DIR" -I. android/view/IDisplayFoldListener.aidl
+"$BUILD_TOOLS_DIR/aidl" -o"$GEN_DIR" -I. -p "$ANDROID_AIDL" \
+    android/view/IDisplayWindowListener.aidl
+
+# Fake sources to expose hidden Android types to the project
+FAKE_SRC=( \
+    android/content/*java \
+)
 
 SRC=( \
     com/genymobile/scrcpy/*.java \
     com/genymobile/scrcpy/audio/*.java \
     com/genymobile/scrcpy/control/*.java \
     com/genymobile/scrcpy/device/*.java \
+    com/genymobile/scrcpy/opengl/*.java \
     com/genymobile/scrcpy/util/*.java \
     com/genymobile/scrcpy/video/*.java \
     com/genymobile/scrcpy/wrappers/*.java \
@@ -69,10 +79,11 @@ done
 
 echo "Compiling java sources..."
 cd ../java
-javac -bootclasspath "$ANDROID_JAR" \
+javac -encoding UTF-8 -bootclasspath "$ANDROID_JAR" \
     -cp "$LAMBDA_JAR:$GEN_DIR" \
     -d "$CLASSES_DIR" \
     -source 1.8 -target 1.8 \
+    ${FAKE_SRC[@]} \
     ${SRC[@]}
 
 echo "Dexing..."

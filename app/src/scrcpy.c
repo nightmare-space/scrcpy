@@ -428,7 +428,10 @@ scrcpy(struct scrcpy_options *options) {
         .video_bit_rate = options->video_bit_rate,
         .audio_bit_rate = options->audio_bit_rate,
         .max_fps = options->max_fps,
-        .lock_video_orientation = options->lock_video_orientation,
+        .angle = options->angle,
+        .screen_off_timeout = options->screen_off_timeout,
+        .capture_orientation = options->capture_orientation,
+        .capture_orientation_lock = options->capture_orientation_lock,
         .control = options->control,
         .display_id = options->display_id,
         .new_display = options->new_display,
@@ -455,6 +458,8 @@ scrcpy(struct scrcpy_options *options) {
         .power_on = options->power_on,
         .kill_adb_on_close = options->kill_adb_on_close,
         .camera_high_speed = options->camera_high_speed,
+        .vd_destroy_content = options->vd_destroy_content,
+        .vd_system_decorations = options->vd_system_decorations,
         .list = options->list,
     };
 

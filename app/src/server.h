@@ -45,7 +45,10 @@ struct sc_server_params {
     uint32_t video_bit_rate;
     uint32_t audio_bit_rate;
     const char *max_fps; // float to be parsed by the server
-    int8_t lock_video_orientation;
+    const char *angle; // float to be parsed by the server
+    sc_tick screen_off_timeout;
+    enum sc_orientation capture_orientation;
+    enum sc_orientation_lock capture_orientation_lock;
     bool control;
     uint32_t display_id;
     const char *new_display;
@@ -66,6 +69,8 @@ struct sc_server_params {
     bool power_on;
     bool kill_adb_on_close;
     bool camera_high_speed;
+    bool vd_destroy_content;
+    bool vd_system_decorations;
     uint8_t list;
 };
 

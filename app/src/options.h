@@ -84,6 +84,12 @@ enum sc_orientation {         // v v v
     SC_ORIENTATION_FLIP_270,  // 1 1 1
 };
 
+enum sc_orientation_lock {
+    SC_ORIENTATION_UNLOCKED,
+    SC_ORIENTATION_LOCKED_VALUE,   // lock to specified orientation
+    SC_ORIENTATION_LOCKED_INITIAL, // lock to initial device orientation
+};
+
 static inline bool
 sc_orientation_is_mirror(enum sc_orientation orientation) {
     assert(!(orientation & ~7));
@@ -129,18 +135,6 @@ sc_orientation_get_name(enum sc_orientation orientation) {
             return "(unknown)";
     }
 }
-
-enum sc_lock_video_orientation {
-    SC_LOCK_VIDEO_ORIENTATION_UNLOCKED = -1,
-    // lock the current orientation when scrcpy starts
-    SC_LOCK_VIDEO_ORIENTATION_INITIAL = -2,
-    // like SC_LOCK_VIDEO_ORIENTATION_INITIAL, but set automatically
-    SC_LOCK_VIDEO_ORIENTATION_INITIAL_AUTO = -3,
-    SC_LOCK_VIDEO_ORIENTATION_0 = 0,
-    SC_LOCK_VIDEO_ORIENTATION_90 = 3,
-    SC_LOCK_VIDEO_ORIENTATION_180 = 2,
-    SC_LOCK_VIDEO_ORIENTATION_270 = 1,
-};
 
 enum sc_keyboard_input_mode {
     SC_KEYBOARD_INPUT_MODE_AUTO,
@@ -253,7 +247,9 @@ struct scrcpy_options {
     uint32_t video_bit_rate;
     uint32_t audio_bit_rate;
     const char *max_fps; // float to be parsed by the server
-    enum sc_lock_video_orientation lock_video_orientation;
+    const char *angle; // float to be parsed by the server
+    enum sc_orientation capture_orientation;
+    enum sc_orientation_lock capture_orientation_lock;
     enum sc_orientation display_orientation;
     enum sc_orientation record_orientation;
     int16_t window_x; // SC_WINDOW_POSITION_UNDEFINED for "auto"
@@ -265,6 +261,7 @@ struct scrcpy_options {
     sc_tick audio_buffer;
     sc_tick audio_output_buffer;
     sc_tick time_limit;
+    sc_tick screen_off_timeout;
 #ifdef HAVE_V4L2
     const char *v4l2_device;
     sc_tick v4l2_buffer;
@@ -313,6 +310,8 @@ struct scrcpy_options {
     bool audio_dup;
     const char *new_display; // [<width>x<height>][/<dpi>] parsed by the server
     const char *start_app;
+    bool vd_destroy_content;
+    bool vd_system_decorations;
 };
 
 extern const struct scrcpy_options scrcpy_options_default;

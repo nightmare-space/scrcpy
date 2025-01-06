@@ -40,10 +40,9 @@ public final class Device {
     public static final int INJECT_MODE_WAIT_FOR_RESULT = InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_RESULT;
     public static final int INJECT_MODE_WAIT_FOR_FINISH = InputManager.INJECT_INPUT_EVENT_MODE_WAIT_FOR_FINISH;
 
-    public static final int LOCK_VIDEO_ORIENTATION_UNLOCKED = -1;
-    public static final int LOCK_VIDEO_ORIENTATION_INITIAL = -2;
-    // like SC_LOCK_VIDEO_ORIENTATION_INITIAL, but set automatically
-    public static final int LOCK_VIDEO_ORIENTATION_INITIAL_AUTO = -3;
+    // The new display power method introduced in Android 15 does not work as expected:
+    // <https://github.com/Genymobile/scrcpy/issues/5530>
+    private static final boolean USE_ANDROID_15_DISPLAY_POWER = false;
 
     private Device() {
         // not instantiable
@@ -132,7 +131,7 @@ public final class Device {
     public static boolean setDisplayPower(int displayId, boolean on) {
         assert displayId != Device.DISPLAY_ID_NONE;
 
-        if (Build.VERSION.SDK_INT >= AndroidVersions.API_35_ANDROID_15) {
+        if (USE_ANDROID_15_DISPLAY_POWER && Build.VERSION.SDK_INT >= AndroidVersions.API_35_ANDROID_15) {
             return ServiceManager.getDisplayManager().requestDisplayPower(displayId, on);
         }
 

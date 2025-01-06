@@ -2,6 +2,7 @@ package com.genymobile.scrcpy.video;
 
 import com.genymobile.scrcpy.AndroidVersions;
 import com.genymobile.scrcpy.AsyncProcessor;
+import com.genymobile.scrcpy.Options;
 import com.genymobile.scrcpy.device.ConfigurationException;
 import com.genymobile.scrcpy.device.Size;
 import com.genymobile.scrcpy.device.Streamer;
@@ -51,15 +52,14 @@ public class SurfaceEncoder implements AsyncProcessor {
 
     private final CaptureReset reset = new CaptureReset();
 
-    public SurfaceEncoder(SurfaceCapture capture, Streamer streamer, int videoBitRate, float maxFps, List<CodecOption> codecOptions,
-            String encoderName, boolean downsizeOnError) {
+    public SurfaceEncoder(SurfaceCapture capture, Streamer streamer, Options options) {
         this.capture = capture;
         this.streamer = streamer;
-        this.videoBitRate = videoBitRate;
-        this.maxFps = maxFps;
-        this.codecOptions = codecOptions;
-        this.encoderName = encoderName;
-        this.downsizeOnError = downsizeOnError;
+        this.videoBitRate = options.getVideoBitRate();
+        this.maxFps = options.getMaxFps();
+        this.codecOptions = options.getVideoCodecOptions();
+        this.encoderName = options.getVideoEncoder();
+        this.downsizeOnError = options.getDownsizeOnError();
     }
 
     private void streamCapture() throws IOException, ConfigurationException {
@@ -86,13 +86,17 @@ public class SurfaceEncoder implements AsyncProcessor {
                 format.setInteger(MediaFormat.KEY_HEIGHT, size.getHeight());
 
                 Surface surface = null;
+                boolean mediaCodecStarted = false;
+                boolean captureStarted = false;
                 try {
                     mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
                     surface = mediaCodec.createInputSurface();
 
                     capture.start(surface);
+                    captureStarted = true;
 
                     mediaCodec.start();
+                    mediaCodecStarted = true;
 
                     // Set the MediaCodec instance to "interrupt" (by signaling an EOS) on reset
                     reset.setRunningMediaCodec(mediaCodec);
@@ -108,18 +112,28 @@ public class SurfaceEncoder implements AsyncProcessor {
                         // The capture might have been closed internally (for example if the camera is disconnected)
                         alive = !stopped.get() && !capture.isClosed();
                     }
-
-                    // do not call stop() on exception, it would trigger an IllegalStateException
-                    mediaCodec.stop();
-                } catch (IllegalStateException | IllegalArgumentException e) {
-                    Ln.e("Encoding error: " + e.getClass().getName() + ": " + e.getMessage());
+                } catch (IllegalStateException | IllegalArgumentException | IOException e) {
+                    if (IO.isBrokenPipe(e)) {
+                        // Do not retry on broken pipe, which is expected on close because the socket is closed by the client
+                        throw e;
+                    }
+                    Ln.e("Capture/encoding error: " + e.getClass().getName() + ": " + e.getMessage());
                     if (!prepareRetry(size)) {
                         throw e;
                     }
-                    Ln.i("Retrying...");
                     alive = true;
                 } finally {
                     reset.setRunningMediaCodec(null);
+                    if (captureStarted) {
+                        capture.stop();
+                    }
+                    if (mediaCodecStarted) {
+                        try {
+                            mediaCodec.stop();
+                        } catch (IllegalStateException e) {
+                            // ignore (just in case)
+                        }
+                    }
                     mediaCodec.reset();
                     if (surface != null) {
                         surface.release();

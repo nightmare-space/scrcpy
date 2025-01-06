@@ -1,15 +1,20 @@
 package com.genymobile.scrcpy.video;
 
 import com.genymobile.scrcpy.AndroidVersions;
+import com.genymobile.scrcpy.Options;
 import com.genymobile.scrcpy.control.PositionMapper;
 import com.genymobile.scrcpy.device.DisplayInfo;
 import com.genymobile.scrcpy.device.NewDisplay;
+import com.genymobile.scrcpy.device.Orientation;
 import com.genymobile.scrcpy.device.Size;
+import com.genymobile.scrcpy.opengl.AffineOpenGLFilter;
+import com.genymobile.scrcpy.opengl.OpenGLFilter;
+import com.genymobile.scrcpy.opengl.OpenGLRunner;
+import com.genymobile.scrcpy.util.AffineMatrix;
 import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.wrappers.ServiceManager;
 
 import android.graphics.Rect;
-import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.os.Build;
 import android.view.Surface;
@@ -19,6 +24,8 @@ import java.io.IOException;
 public class NewDisplayCapture extends SurfaceCapture {
 
     // Internal fields copied from android.hardware.display.DisplayManager
+    private static final int VIRTUAL_DISPLAY_FLAG_PUBLIC = android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC;
+    private static final int VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY = android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY;
     private static final int VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH = 1 << 6;
     private static final int VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT = 1 << 7;
     private static final int VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL = 1 << 8;
@@ -33,28 +40,55 @@ public class NewDisplayCapture extends SurfaceCapture {
     private final VirtualDisplayListener vdListener;
     private final NewDisplay newDisplay;
 
+    private final DisplaySizeMonitor displaySizeMonitor = new DisplaySizeMonitor();
+
+    private AffineMatrix displayTransform;
+    private AffineMatrix eventTransform;
+    private OpenGLRunner glRunner;
+
     private Size mainDisplaySize;
     private int mainDisplayDpi;
-    private int maxSize; // only used if newDisplay.getSize() != null
+    private int maxSize;
+    private final Rect crop;
+    private final boolean captureOrientationLocked;
+    private final Orientation captureOrientation;
+    private final float angle;
+    private final boolean vdDestroyContent;
+    private final boolean vdSystemDecorations;
 
     private VirtualDisplay virtualDisplay;
-    private Size size;
+    private Size videoSize;
+    private Size displaySize; // the logical size of the display (including rotation)
+    private Size physicalSize; // the physical size of the display (without rotation)
+
     private int dpi;
 
-    public NewDisplayCapture(VirtualDisplayListener vdListener, NewDisplay newDisplay, int maxSize) {
+    public NewDisplayCapture(VirtualDisplayListener vdListener, Options options) {
         this.vdListener = vdListener;
-        this.newDisplay = newDisplay;
-        this.maxSize = maxSize;
+        this.newDisplay = options.getNewDisplay();
+        assert newDisplay != null;
+        this.maxSize = options.getMaxSize();
+        this.crop = options.getCrop();
+        assert options.getCaptureOrientationLock() != null;
+        this.captureOrientationLocked = options.getCaptureOrientationLock() != Orientation.Lock.Unlocked;
+        this.captureOrientation = options.getCaptureOrientation();
+        assert captureOrientation != null;
+        this.angle = options.getAngle();
+        this.vdDestroyContent = options.getVDDestroyContent();
+        this.vdSystemDecorations = options.getVDSystemDecorations();
     }
 
     @Override
     protected void init() {
-        size = newDisplay.getSize();
+        displaySize = newDisplay.getSize();
         dpi = newDisplay.getDpi();
-        if (size == null || dpi == 0) {
+        if (displaySize == null || dpi == 0) {
             DisplayInfo displayInfo = ServiceManager.getDisplayManager().getDisplayInfo(0);
             if (displayInfo != null) {
                 mainDisplaySize = displayInfo.getSize();
+                if ((displayInfo.getRotation() % 2) != 0) {
+                    mainDisplaySize = mainDisplaySize.rotate(); // Use the natural device orientation (at rotation 0), not the current one
+                }
                 mainDisplayDpi = displayInfo.getDpi();
             } else {
                 Ln.w("Main display not found, fallback to 1920x1080 240dpi");
@@ -66,24 +100,82 @@ public class NewDisplayCapture extends SurfaceCapture {
 
     @Override
     public void prepare() {
-        if (!newDisplay.hasExplicitSize()) {
-            size = ScreenInfo.computeVideoSize(mainDisplaySize.getWidth(), mainDisplaySize.getHeight(), maxSize);
-        }
-        if (!newDisplay.hasExplicitDpi()) {
-            dpi = scaleDpi(mainDisplaySize, mainDisplayDpi, size);
-        }
-    }
+        int displayRotation;
+        if (virtualDisplay == null) {
+            if (!newDisplay.hasExplicitSize()) {
+                displaySize = mainDisplaySize;
+            }
+            if (!newDisplay.hasExplicitDpi()) {
+                dpi = scaleDpi(mainDisplaySize, mainDisplayDpi, displaySize);
+            }
 
+            videoSize = displaySize;
+            displayRotation = 0;
+            // Set the current display size to avoid an unnecessary call to invalidate()
+            displaySizeMonitor.setSessionDisplaySize(displaySize);
+        } else {
+            DisplayInfo displayInfo = ServiceManager.getDisplayManager().getDisplayInfo(virtualDisplay.getDisplay().getDisplayId());
+            displaySize = displayInfo.getSize();
+            dpi = displayInfo.getDpi();
+            displayRotation = displayInfo.getRotation();
+        }
+
+        VideoFilter filter = new VideoFilter(displaySize);
+
+        if (crop != null) {
+            boolean transposed = (displayRotation % 2) != 0;
+            filter.addCrop(crop, transposed);
+        }
+
+        filter.addOrientation(displayRotation, captureOrientationLocked, captureOrientation);
+        filter.addAngle(angle);
+
+        Size filteredSize = filter.getOutputSize();
+        if (!filteredSize.isMultipleOf8() || (maxSize != 0 && filteredSize.getMax() > maxSize)) {
+            if (maxSize != 0) {
+                filteredSize = filteredSize.limit(maxSize);
+            }
+            filteredSize = filteredSize.round8();
+            filter.addResize(filteredSize);
+        }
+
+        eventTransform = filter.getInverseTransform();
+
+        // DisplayInfo gives the oriented size (so videoSize includes the display rotation)
+        videoSize = filter.getOutputSize();
+
+        // But the virtual display video always remains in the origin orientation (the video itself is not rotated, so it must rotated manually).
+        // This additional display rotation must not be included in the input events transform (the expected coordinates are already in the
+        // physical display size)
+        if ((displayRotation % 2) == 0) {
+            physicalSize = displaySize;
+        } else {
+            physicalSize = displaySize.rotate();
+        }
+        VideoFilter displayFilter = new VideoFilter(physicalSize);
+        displayFilter.addRotation(displayRotation);
+        AffineMatrix displayRotationMatrix = displayFilter.getInverseTransform();
+
+        // Take care of multiplication order:
+        //   displayTransform = (FILTER_MATRIX * DISPLAY_FILTER_MATRIX)⁻¹
+        //                    = DISPLAY_FILTER_MATRIX⁻¹ * FILTER_MATRIX⁻¹
+        //                    = displayRotationMatrix * eventTransform
+        displayTransform = AffineMatrix.multiplyAll(displayRotationMatrix, eventTransform);
+    }
 
     public void startNew(Surface surface) {
         int virtualDisplayId;
         try {
-            int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
-                    | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+            int flags = VIRTUAL_DISPLAY_FLAG_PUBLIC
+                    | VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
                     | VIRTUAL_DISPLAY_FLAG_SUPPORTS_TOUCH
-                    | VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT
-                    | VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL
-                    | VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS;
+                    | VIRTUAL_DISPLAY_FLAG_ROTATES_WITH_CONTENT;
+            if (vdDestroyContent) {
+                flags |= VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL;
+            }
+            if (vdSystemDecorations) {
+                flags |= VIRTUAL_DISPLAY_FLAG_SHOULD_SHOW_SYSTEM_DECORATIONS;
+            }
             if (Build.VERSION.SDK_INT >= AndroidVersions.API_33_ANDROID_13) {
                 flags |= VIRTUAL_DISPLAY_FLAG_TRUSTED
                         | VIRTUAL_DISPLAY_FLAG_OWN_DISPLAY_GROUP
@@ -95,32 +187,50 @@ public class NewDisplayCapture extends SurfaceCapture {
                 }
             }
             virtualDisplay = ServiceManager.getDisplayManager()
-                    .createNewVirtualDisplay("scrcpy", size.getWidth(), size.getHeight(), dpi, surface, flags);
+                    .createNewVirtualDisplay("scrcpy", displaySize.getWidth(), displaySize.getHeight(), dpi, surface, flags);
             virtualDisplayId = virtualDisplay.getDisplay().getDisplayId();
-            Ln.i("New display: " + size.getWidth() + "x" + size.getHeight() + "/" + dpi + " (id=" + virtualDisplayId + ")");
+            Ln.i("New display: " + displaySize.getWidth() + "x" + displaySize.getHeight() + "/" + dpi + " (id=" + virtualDisplayId + ")");
+
+            displaySizeMonitor.start(virtualDisplayId, this::invalidate);
         } catch (Exception e) {
             Ln.e("Could not create display", e);
             throw new AssertionError("Could not create display");
-        }
-
-        if (vdListener != null) {
-            Rect contentRect = new Rect(0, 0, size.getWidth(), size.getHeight());
-            PositionMapper positionMapper = new PositionMapper(size, contentRect, 0);
-            vdListener.onNewVirtualDisplay(virtualDisplayId, positionMapper);
         }
     }
 
     @Override
     public void start(Surface surface) throws IOException {
+        if (displayTransform != null) {
+            assert glRunner == null;
+            OpenGLFilter glFilter = new AffineOpenGLFilter(displayTransform);
+            glRunner = new OpenGLRunner(glFilter);
+            surface = glRunner.start(physicalSize, videoSize, surface);
+        }
+
         if (virtualDisplay == null) {
             startNew(surface);
         } else {
             virtualDisplay.setSurface(surface);
         }
+
+        if (vdListener != null) {
+            PositionMapper positionMapper = PositionMapper.create(videoSize, eventTransform, displaySize);
+            vdListener.onNewVirtualDisplay(virtualDisplay.getDisplay().getDisplayId(), positionMapper);
+        }
+    }
+
+    @Override
+    public void stop() {
+        if (glRunner != null) {
+            glRunner.stopAndRelease();
+            glRunner = null;
+        }
     }
 
     @Override
     public void release() {
+        displaySizeMonitor.stopAndRelease();
+
         if (virtualDisplay != null) {
             virtualDisplay.release();
             virtualDisplay = null;
@@ -129,16 +239,11 @@ public class NewDisplayCapture extends SurfaceCapture {
 
     @Override
     public synchronized Size getSize() {
-        return size;
+        return videoSize;
     }
 
     @Override
     public synchronized boolean setMaxSize(int newMaxSize) {
-        if (newDisplay.hasExplicitSize()) {
-            // Cannot retry with a different size if the display size was explicitly provided
-            return false;
-        }
-
         maxSize = newMaxSize;
         return true;
     }

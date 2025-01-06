@@ -14,10 +14,9 @@ import com.genymobile.scrcpy.device.DesktopConnection;
 import com.genymobile.scrcpy.device.Device;
 import com.genymobile.scrcpy.device.NewDisplay;
 import com.genymobile.scrcpy.device.Streamer;
+import com.genymobile.scrcpy.opengl.OpenGLRunner;
 import com.genymobile.scrcpy.util.Ln;
 import com.genymobile.scrcpy.util.LogUtils;
-import com.genymobile.scrcpy.util.Settings;
-import com.genymobile.scrcpy.util.SettingsException;
 import com.genymobile.scrcpy.video.CameraCapture;
 import com.genymobile.scrcpy.video.NewDisplayCapture;
 import com.genymobile.scrcpy.video.ScreenCapture;
@@ -25,7 +24,6 @@ import com.genymobile.scrcpy.video.SurfaceCapture;
 import com.genymobile.scrcpy.video.SurfaceEncoder;
 import com.genymobile.scrcpy.video.VideoSource;
 
-import android.os.BatteryManager;
 import android.os.Build;
 
 import java.io.File;
@@ -76,51 +74,6 @@ public final class Server {
         // not instantiable
     }
 
-    private static void initAndCleanUp(Options options, CleanUp cleanUp) {
-        // This method is called from its own thread, so it may only configure cleanup actions which are NOT dynamic (i.e. they are configured once
-        // and for all, they cannot be changed from another thread)
-
-        if (options.getShowTouches()) {
-            try {
-                String oldValue = Settings.getAndPutValue(Settings.TABLE_SYSTEM, "show_touches", "1");
-                // If "show touches" was disabled, it must be disabled back on clean up
-                if (!"1".equals(oldValue)) {
-                    if (!cleanUp.setDisableShowTouches(true)) {
-                        Ln.e("Could not disable show touch on exit");
-                    }
-                }
-            } catch (SettingsException e) {
-                Ln.e("Could not change \"show_touches\"", e);
-            }
-        }
-
-        if (options.getStayAwake()) {
-            int stayOn = BatteryManager.BATTERY_PLUGGED_AC | BatteryManager.BATTERY_PLUGGED_USB | BatteryManager.BATTERY_PLUGGED_WIRELESS;
-            try {
-                String oldValue = Settings.getAndPutValue(Settings.TABLE_GLOBAL, "stay_on_while_plugged_in", String.valueOf(stayOn));
-                try {
-                    int restoreStayOn = Integer.parseInt(oldValue);
-                    if (restoreStayOn != stayOn) {
-                        // Restore only if the current value is different
-                        if (!cleanUp.setRestoreStayOn(restoreStayOn)) {
-                            Ln.e("Could not restore stay on on exit");
-                        }
-                    }
-                } catch (NumberFormatException e) {
-                    // ignore
-                }
-            } catch (SettingsException e) {
-                Ln.e("Could not change \"stay_on_while_plugged_in\"", e);
-            }
-        }
-
-        if (options.getPowerOffScreenOnClose()) {
-            if (!cleanUp.setPowerOffScreen(true)) {
-                Ln.e("Could not power off screen on exit");
-            }
-        }
-    }
-
     private static void scrcpy(Options options) throws IOException, ConfigurationException {
         if (Build.VERSION.SDK_INT < AndroidVersions.API_31_ANDROID_12 && options.getVideoSource() == VideoSource.CAMERA) {
             Ln.e("Camera mirroring is not supported before Android 12");
@@ -132,32 +85,10 @@ public final class Server {
             throw new ConfigurationException("New virtual display is not supported");
         }
 
-        if (Build.VERSION.SDK_INT >= AndroidVersions.API_34_ANDROID_14) {
-            int lockVideoOrientation = options.getLockVideoOrientation();
-            if (lockVideoOrientation != Device.LOCK_VIDEO_ORIENTATION_UNLOCKED) {
-                if (lockVideoOrientation != Device.LOCK_VIDEO_ORIENTATION_INITIAL_AUTO) {
-                    Ln.e("--lock-video-orientation is broken on Android >= 14: <https://github.com/Genymobile/scrcpy/issues/4011>");
-                    throw new ConfigurationException("--lock-video-orientation is broken on Android >= 14");
-                } else {
-                    // If the flag has been set automatically (because v4l2 sink is enabled), do not fail
-                    Ln.w("--lock-video-orientation is ignored on Android >= 14: <https://github.com/Genymobile/scrcpy/issues/4011>");
-                }
-            }
-            if (options.getCrop() != null) {
-                Ln.e("--crop is broken on Android >= 14: <https://github.com/Genymobile/scrcpy/issues/4162>");
-                throw new ConfigurationException("Crop is not broken on Android >= 14");
-            }
-        }
-
         CleanUp cleanUp = null;
-        Thread initThread = null;
-
-        NewDisplay newDisplay = options.getNewDisplay();
-        int displayId = newDisplay == null ? options.getDisplayId() : Device.DISPLAY_ID_NONE;
 
         if (options.getCleanup()) {
-            cleanUp = CleanUp.configure(displayId);
-            initThread = startInitThread(options, cleanUp);
+            cleanUp = CleanUp.start(options);
         }
 
         int scid = options.getScid();
@@ -181,7 +112,7 @@ public final class Server {
 
             if (control) {
                 ControlChannel controlChannel = connection.getControlChannel();
-                controller = new Controller(displayId, controlChannel, cleanUp, options.getClipboardAutosync(), options.getPowerOn());
+                controller = new Controller(controlChannel, cleanUp, options);
                 asyncProcessors.add(controller);
             }
 
@@ -200,8 +131,7 @@ public final class Server {
                 if (audioCodec == AudioCodec.RAW) {
                     audioRecorder = new AudioRawRecorder(audioCapture, audioStreamer);
                 } else {
-                    audioRecorder = new AudioEncoder(audioCapture, audioStreamer, options.getAudioBitRate(), options.getAudioCodecOptions(),
-                            options.getAudioEncoder());
+                    audioRecorder = new AudioEncoder(audioCapture, audioStreamer, options);
                 }
                 asyncProcessors.add(audioRecorder);
             }
@@ -211,19 +141,17 @@ public final class Server {
                         options.getSendFrameMeta());
                 SurfaceCapture surfaceCapture;
                 if (options.getVideoSource() == VideoSource.DISPLAY) {
+                    NewDisplay newDisplay = options.getNewDisplay();
                     if (newDisplay != null) {
-                        surfaceCapture = new NewDisplayCapture(controller, newDisplay, options.getMaxSize());
+                        surfaceCapture = new NewDisplayCapture(controller, options);
                     } else {
-                        assert displayId != Device.DISPLAY_ID_NONE;
-                        surfaceCapture = new ScreenCapture(controller, displayId, options.getMaxSize(), options.getCrop(),
-                                options.getLockVideoOrientation());
+                        assert options.getDisplayId() != Device.DISPLAY_ID_NONE;
+                        surfaceCapture = new ScreenCapture(controller, options);
                     }
                 } else {
-                    surfaceCapture = new CameraCapture(options.getCameraId(), options.getCameraFacing(), options.getCameraSize(),
-                            options.getMaxSize(), options.getCameraAspectRatio(), options.getCameraFps(), options.getCameraHighSpeed());
+                    surfaceCapture = new CameraCapture(options);
                 }
-                SurfaceEncoder surfaceEncoder = new SurfaceEncoder(surfaceCapture, videoStreamer, options.getVideoBitRate(), options.getMaxFps(),
-                        options.getVideoCodecOptions(), options.getVideoEncoder(), options.getDownsizeOnError());
+                SurfaceEncoder surfaceEncoder = new SurfaceEncoder(surfaceCapture, videoStreamer, options);
                 asyncProcessors.add(surfaceEncoder);
 
                 if (controller != null) {
@@ -240,34 +168,31 @@ public final class Server {
 
             completion.await();
         } finally {
-            if (initThread != null) {
-                initThread.interrupt();
+            if (cleanUp != null) {
+                cleanUp.interrupt();
             }
             for (AsyncProcessor asyncProcessor : asyncProcessors) {
                 asyncProcessor.stop();
             }
 
+            OpenGLRunner.quit(); // quit the OpenGL thread, if any
+
             connection.shutdown();
 
             try {
-                if (initThread != null) {
-                    initThread.join();
+                if (cleanUp != null) {
+                    cleanUp.join();
                 }
                 for (AsyncProcessor asyncProcessor : asyncProcessors) {
                     asyncProcessor.join();
                 }
+                OpenGLRunner.join();
             } catch (InterruptedException e) {
                 // ignore
             }
 
             connection.close();
         }
-    }
-
-    private static Thread startInitThread(final Options options, final CleanUp cleanUp) {
-        Thread thread = new Thread(() -> initAndCleanUp(options, cleanUp), "init-cleanup");
-        thread.start();
-        return thread;
     }
 
     public static void main(String... args) {
