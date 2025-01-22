@@ -116,5 +116,3 @@ fi
 rm -rf "$GEN_DIR" "$CLASSES_DIR"
 
 echo "Server generated in $BUILD_DIR/$SERVER_BINARY"
-
-cp $BUILD_DIR/$SERVER_BINARY /Users/nightmare/Desktop/nightmare-core/uncon/assets/scrcpy-server-v2.7

@@ -32,10 +32,8 @@ public final class PositionMapper {
     }
 
     public Point map(Position position) {
-        // reverse the video rotation to apply the events
-        Position devicePosition = position.rotate(coordsRotation);
 
-        Size clientVideoSize = devicePosition.getScreenSize();
+        Size clientVideoSize = position.getScreenSize();
         // Android MediaCodec may generate frames with dimensions slightly different from the video resolution
         // (e.g. 1120x2480 instead of 1112x2480), so allow a small difference
         if (Math.abs(videoSize.getWidth() - clientVideoSize.getWidth()) > 16

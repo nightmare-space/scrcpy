@@ -20,6 +20,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.InputDevice;
 import android.view.InputEvent;
 import android.view.KeyCharacterMap;
@@ -66,6 +67,7 @@ public final class Device {
             return false;
         }
 
+        // Ln.i("injectEvent: " + inputEvent);
         return ServiceManager.getInputManager().injectInputEvent(inputEvent, injectMode);
     }
 

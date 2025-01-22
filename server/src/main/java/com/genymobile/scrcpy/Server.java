@@ -24,6 +24,7 @@ import com.genymobile.scrcpy.video.SurfaceCapture;
 import com.genymobile.scrcpy.video.SurfaceEncoder;
 import com.genymobile.scrcpy.video.VideoSource;
 
+import android.content.ContentResolver;
 import android.os.Build;
 
 import java.io.File;
@@ -99,7 +100,13 @@ public final class Server {
         boolean sendDummyByte = options.getSendDummyByte();
 
         Workarounds.apply();
-
+        try {
+            ContentResolver contentResolver = FakeContext.get().getContentResolver();
+            int airplaneMode = android.provider.Settings.Global.getInt(contentResolver, android.provider.Settings.Global.AIRPLANE_MODE_ON);
+            Ln.i("Airplane mode: " + airplaneMode);
+        } catch (Exception e) {
+            Ln.e("Get content resolver failed", e);
+        }
         List<AsyncProcessor> asyncProcessors = new ArrayList<>();
 
         DesktopConnection connection = DesktopConnection.open(scid, tunnelForward, video, audio, control, sendDummyByte);
